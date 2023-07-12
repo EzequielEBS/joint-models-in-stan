@@ -1,0 +1,331 @@
+---
+title: "Simulating Data"
+output: html_document
+date: "2023-07-11"
+---
+
+## Models
+
+The objective is to generate data for joint models. The longitudinal model is
+
+```{=latex}
+\begin{align*}
+  Y_{ij} &= \beta_{11} + \beta_{12}t_{ij} + \beta_{13}X_i + U_{1i} + U_{2i}t_{ij} + Z_{ij},
+  \\
+  X_i &\sim N(0,1),
+  \\
+  (U_{1i}, U_{2i}) &\sim MVN(0, \Sigma),
+  \\
+  Z_{ij} &\sim N(0, \sigma_z),
+\end{align*}
+```
+
+for individual i at time j.
+
+The model for event times is
+
+```{=latex}
+\begin{align*}
+  h_i(t_i) &= h_{0i}(t_i) \exp\{\beta_{21}X_i + \gamma_1 U_{1i} + \gamma_2 U_{2i} + \gamma_3(U_{1i} + U_{2i}t_i) + U_{3i}\},
+  \\
+  U_{3i} &\sim N(0, \sigma_3),
+  \\
+  h_{0i}(t_i) &= \lambda \rho t_i^{\rho-1} \text{(Weibull baseline)}.
+\end{align*}
+```
+
+
+## Functions
+
+Generating data:
+
+```{r}
+library("MASS") 
+library("cmdstanr")
+library("pracma")
+
+set.seed(123)
+
+#########################################################################
+# Joint model simulation
+#########################################################################
+# m   : sample size
+# lambda > 0: scale for Weibull baseline hazard 
+# rho > 0: shape for Weibull baseline hazard
+# cens_time: censored time
+# beta: vector of covariates
+# gamma: vector of association coefficients
+# sigma_U: vector with variances of U1, U2 and U3
+# sigma_z: standard deviation of measurement errors 
+# rho: correlation between U1 and U2
+# n_rep_obs: number of repeated observations for each individual
+
+
+
+simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs){
+  
+  times <- ID <- longit.out <- X_total <- vector()
+  
+  beta_11 <- beta[1]
+  beta_12 <- beta[2]
+  beta_13 <- beta[3]
+  beta_21 <- beta[4]
+  
+  gamma_1 <- gamma[1] 
+  gamma_2 <- gamma[2]
+  gamma_3 <- gamma[3]
+  
+  mu_U1 <- 0
+  mu_U2 <- 0
+  mu_U <- c(mu_U1,mu_U2)
+  sigma_U1 <- sigma_U[1]
+  sigma_U2 <- sigma_U[2]
+  sigma_U3 <- sigma_U[3]
+  sigma_U <- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
+                    2)
+  bvnU <- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
+  U1 <- bvnU[,1]
+  U2 <- bvnU[,2]
+  U3 <- rnorm(m, 0, sigma_U3)
+  
+  X <- rnorm(m, 0, 1)
+  
+  ###################
+  # Survival process
+  ###################
+  
+  # Simulating the times to event
+
+  v <- runif(n=m)
+  id_times <- c(1:m)
+  
+  for(i in 1:m){
+    h_0_not_t <- lambda*rho_s
+    h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+    
+    # add case gamma_3 == 0
+    
+    # result of integrate h(t). It works but it is not correct, because it needs -gamma_3*U2[i]*u >= 0
+    H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]])
+    
+    
+    Sv <- Vectorize(function(u) abs(exp(-H(u)) - v[i]))
+    
+    # find t that minimizes absolute error: |S_i(t) - v[i]| (may not be a root)
+    times[i] <- optim(0, Sv, lower = 0, upper = Inf)$par
+    
+  }
+  status <- as.vector(times < cens_time)
+  times <- as.vector(ifelse(status, times, cens_time))
+  status <- as.numeric(status) # Censoring indicators (1=Observed, 0=Censored)
+  
+  ##############################
+  # Longitudinal process  
+  ##############################
+  
+  obs_times.out <- vector()
+  for(i in 1:m){
+    obs_times <- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+    
+    X_t <- rep(X[i], length(obs_times))
+
+    X_total <- c(X_total,X_t)
+    Z = rnorm(length(obs_times), 0, sigma_z)
+    yt <- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+
+    longit.out <- c(longit.out,yt)
+    ID <- c(ID,rep(i,length(obs_times)))
+    obs_times.out <- c(obs_times.out,obs_times)
+  }
+  
+  #---------------------------------------------------------------------
+  # Creating the longitudinal and survival processes object
+  #---------------------------------------------------------------------
+  long.proc <- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
+  surv.proc <- as.matrix(cbind(id_times, times, status)) # Survival process
+  obj <- list(long.proc,surv.proc,X_total,X, obs_times.out)
+  names(obj) <- c("longitudinal","survival","X_total", "X", "obs_times")
+  
+  return(obj)
+}
+```
+
+
+Creating data:
+
+```{r}
+m<- 250
+lambda <- 0.01
+rho_s <- 1
+cens_time <- 4
+beta <- c(0,1,1,1)
+gamma <- c(-1.5,0,2)
+sigma_U <- c(0.5^0.5,1,0.25^0.5)
+sigma_z <- 0.25^0.5
+rho <- 0.3
+n_rep_obs <- 0.5
+
+obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)
+
+
+# Required quantities for model fitting
+X <- obj$X                         # unique X    
+X_total <- obj$longitudinal[,3]    # X with repeated observations
+n <- nrow(X)                       # total number of observations
+y <- obj$longitudinal[,2]          # longitudinal outcomes
+ID <- obj$longitudinal[,1]         # patient IDs
+nid <- length(unique(ID))          # number of patients
+id_times <- obj$survival[,1]       # unique ids
+status <- obj$survival[,3]         # vital status (1 = dead, 0 = alive)
+times <- obj$survival[,2]          # times to event
+obs_times <- obj$obs_times         # visit times for repeated observations
+N <- length(y)                     # total number of longitudinal outcomes
+nobs <- length(id_times)           # number of observed survival times
+
+long_data <- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
+
+
+time_data <- data.frame(id=id_times,
+                        times=times,
+                        status=status,
+                        X=X)
+```
+
+Stan model for longitudinal process:
+
+```{stan output.var="long_model"}
+functions{
+// // ------------------------------------------------------
+// //      WEIBULL SURVIVAL SUBMODEL                
+// // ------------------------------------------------------
+//     // Hazard function
+//     vector loghaz(vector t, vector X, vector U1, vector U2, vector U3, vector gamma, real beta_2 real lambda, real rho_s){
+//          vector[num_elements(t)] out;
+//          real gamma_1 = gamma[1];
+//          real gamma_2 = gamma[2];
+//          real gamma_3 = gamma[3];
+//          for(i in 1:num_elements(t)){
+//             out[i] = log(lambda) + log(rho_s) + (rho_s-1)*log(t[i]) + beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3(U1[i] + U2[i]*t[i]) + U3[i];
+//          }
+//          return out;
+//     }                                                                                     
+// 
+//     // Cumulative hazard function
+//     vector cumhaz(vector t, real eta, real nu, real delta){
+//          vector[num_elements(t)] out;  
+//          for(i in 1:num_elements(t)){
+//             out[i] = lambda*rho_s*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*t[i], rho_s)[[1]]);
+//          }
+//          return out;
+//     }
+// ------------------------------------------------------ 
+
+// ------------------------------------------------------
+//     LINEAR PREDICTOR FOR THE LONGITUDINAL SUBMODEL                
+// ------------------------------------------------------ 
+    vector linear_predictor(matrix X, vector obs_times, int[] ID, vector beta_1, matrix U){
+      int N = num_elements(obs_times);
+      vector[N] out;
+      
+      out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*X[ID,1] + U[ID,1] + rows_dot_product(U[ID,2],obs_times);
+      
+      return out;
+    } 
+  // ------------------------------------------------------ 
+}
+
+
+data{
+  int N;
+  int n;
+  vector[N] y;
+  matrix[n,1] X1;
+  int<lower=1,upper=n> ID[N];
+  vector[N] obs_times;
+}
+
+
+parameters{
+  vector[3] beta_1;
+  real<lower=0> sigma_z;
+  real<lower=0> sigma_U[2];
+  real<lower=-1, upper=1> rho;
+  matrix[n,2] U;
+}
+
+transformed parameters{
+  cov_matrix[2] Sigma;
+
+  Sigma[1,1] = sigma_U[1];
+  Sigma[2,2] = sigma_U[2];
+  Sigma[1,2] = sqrt(sigma_U[1]*sigma_U[2])*rho;
+  Sigma[2,1] = Sigma[1,2];
+}
+
+
+model{
+  // ------------------------------------------------------
+    //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
+  // ------------------------------------------------------
+    {
+      vector[N] linpred; 
+      
+      // Linear predictor
+      linpred = linear_predictor(X1, obs_times, ID, beta_1, U);
+      
+      // Longitudinal Normal log-likelihood
+      target += normal_lpdf(y | linpred, sqrt(sigma_z));
+    }  
+
+  // ------------------------------------------------------
+    //                       LOG-PRIORS                       
+  // ------------------------------------------------------
+    // Longitudinal fixed effects
+  target += normal_lpdf(beta_1 | 0, 100);
+  
+  // Random-effects
+   for(i in 1:n){ target += multi_normal_lpdf(U[i,1:2] | rep_vector(0.0,2), Sigma); }
+
+   // Random-effects variance
+   target += inv_gamma_lpdf(sigma_U | 0.01, 0.01);
+
+   // Random-effects correlation
+   target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
+  
+  // Residual error variance
+  target += inv_gamma_lpdf(sigma_z | 0.01, 0.01);   
+}
+```
+
+Testing longitudinal model:
+
+```{r}
+X1 <- as.matrix(X,ncol=1)
+y <- long_data$y
+n <- nrow(X1)
+N <- length(y)
+ID <- as.numeric(long_data$id)
+obs_times <- long_data$obs_times
+
+model <- cmdstan_model("code/long_model.stan")
+
+mle <- model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
+posterior_samples <- model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
+```
+
+```{r}
+mle$summary()
+```
+
+```{r}
+posterior_samples$summary()
+```
+
+Codes based on:
+
+- [How to create a toy survival (time to event) data with right censoring](https://stats.stackexchange.com/questions/135124/how-to-create-a-toy-survival-time-to-event-data-with-right-censoring)
+- [A tractable Bayesian joint model for longitudinal and survival data](https://github.com/daniloalvares/Tractable-BJM/tree/main)
+
+
+
+
