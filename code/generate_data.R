@@ -129,7 +129,8 @@ status <- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
 times <- obj$survival[,3]          # times to event
 obs_times <- obj$obs_times         # visit times for repeated observations
 N <- length(y)                     # total number of longitudinal outcomes
-nobs <- length(id_times)           # number of observed survival times
+indobs <- which(status==1)         # observed survival times indicator
+nobs <- length(indobs)             # number of observed survival times
 
 long_data <- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
 
@@ -149,11 +150,11 @@ ID <- as.numeric(long_data$id)
 obs_times <- long_data$obs_times
 
 
-model <- cmdstan_model("code/long_model.stan")
+long_model <- cmdstan_model("code/long_model.stan")
+event_model <- cmdstan_model("code/event_model.stan")
 
-
-mle <- model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
-posterior_samples <- model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
+mle <- long_model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
+posterior_samples <- long_model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
 
 mle$summary()
 posterior_samples$summary()
