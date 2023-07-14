@@ -355,8 +355,8 @@ display: none;
 </div>
 
 
-<div id="models" class="section level2">
-<h2>Models</h2>
+<div id="models" class="section level1">
+<h1>Models</h1>
 <p>The objective is to generate data for joint models. The longitudinal
 model is</p>
 <span class="math display">\[\begin{align*}
@@ -369,7 +369,7 @@ U_{2i}t_{ij} + Z_{ij},
   \\
   Z_{ij} &amp;\sim N(0, \sigma_z),
 \end{align*}\]</span>
-<p>for individual i at time j.</p>
+<p>for individual i and jth observation.</p>
 <p>The model for event times is</p>
 <span class="math display">\[\begin{align*}
   h_i(t_i) &amp;= h_{0i}(t_i) \exp\{\beta_{21}X_i + \gamma_1 U_{1i} +
@@ -381,21 +381,144 @@ U_{2i}t_{ij} + Z_{ij},
 baseline)}.
 \end{align*}\]</span>
 </div>
-<div id="functions" class="section level2">
-<h2>Functions</h2>
-<p>Generating data:</p>
-<pre class="r"><code>library(&quot;MASS&quot;) </code></pre>
-<pre><code>## Warning: package &#39;MASS&#39; was built under R version 4.2.3</code></pre>
-<pre class="r"><code>library(&quot;cmdstanr&quot;)</code></pre>
-<pre><code>## This is cmdstanr version 0.5.3</code></pre>
-<pre><code>## - CmdStanR documentation and vignettes: mc-stan.org/cmdstanr</code></pre>
-<pre><code>## - CmdStan path: C:/Users/ezequ/Documents/.cmdstan/cmdstan-2.32.2</code></pre>
-<pre><code>## - CmdStan version: 2.32.2</code></pre>
-<pre class="r"><code>library(&quot;pracma&quot;)</code></pre>
-<pre><code>## Warning: package &#39;pracma&#39; was built under R version 4.2.3</code></pre>
+<div id="description" class="section level1">
+<h1>Description</h1>
+<p>The following packages are needed:</p>
+<pre class="r"><code>library(&quot;MASS&quot;) 
+library(&quot;cmdstanr&quot;)
+library(&quot;pracma&quot;)</code></pre>
+<p>To generate the data we need to create <span class="math inline">\((U_1, U_2)\)</span>, <span class="math inline">\(U_3\)</span> and <span class="math inline">\(X\)</span>:</p>
 <pre class="r"><code>set.seed(123)
 
-#########################################################################
+m&lt;- 250
+lambda &lt;- 0.01
+rho_s &lt;- 1
+cens_time &lt;- 4
+beta &lt;- c(0,1,1,1)
+gamma &lt;- c(-1.5,0,2)
+sigma_U &lt;- c(0.5^0.5,1,0.25^0.5)
+sigma_z &lt;- 0.25^0.5
+rho &lt;- 0.3
+n_rep_obs &lt;- 0.5
+
+
+
+beta_11 &lt;- beta[1]
+beta_12 &lt;- beta[2]
+beta_13 &lt;- beta[3]
+beta_21 &lt;- beta[4]
+
+gamma_1 &lt;- gamma[1] 
+gamma_2 &lt;- gamma[2]
+gamma_3 &lt;- gamma[3]
+
+mu_U1 &lt;- 0
+mu_U2 &lt;- 0
+mu_U &lt;- c(mu_U1,mu_U2)
+sigma_U1 &lt;- sigma_U[1]
+sigma_U2 &lt;- sigma_U[2]
+sigma_U3 &lt;- sigma_U[3]
+sigma_U &lt;- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
+                  2)
+bvnU &lt;- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
+U1 &lt;- bvnU[,1]
+U2 &lt;- bvnU[,2]
+U3 &lt;- rnorm(m, 0, sigma_U3)
+
+X &lt;- rnorm(m, 0, 1)</code></pre>
+<div id="time-to-event-data" class="section level2">
+<h2>Time-to-event data</h2>
+<p>For time-to-event data, we need to compute the survival probability
+<span class="math inline">\(S_i(t) = \exp(-H_i(t))\)</span>, where <span class="math inline">\(H_i(t) = \int_{0}^{t} h_i(s)ds\)</span> is the
+cumulative hazard function. To generate <span class="math inline">\(S_i(t)\)</span>, we can apply the procedure
+described in <a href="https://onlinelibrary.wiley.com/doi/abs/10.1002/sim.2059">this
+article</a>: we generate <span class="math inline">\(V_i \sim
+U(0,1)\)</span> and we take <span class="math inline">\(t =
+S_i^{-1}(V_i)\)</span>. In R, we can create <span class="math inline">\(H\)</span> as a function of <span class="math inline">\(t\)</span> and find the root of <span class="math inline">\(S_i(t) - V_i = \exp(-H_i(t)) - V_i =
+\exp(\int_{0}^{t} h_i(s)ds) - V_i\)</span>. We can try to integrate
+<span class="math inline">\(h_i(s)\)</span> using the integrate function
+and find the root using the uniroot function, but it doesn’t work:</p>
+<pre class="r"><code>V &lt;- runif(n=m)
+times &lt;- vector()
+
+for(i in 1:m){
+  h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+  H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+  Sv &lt;- Vectorize(function(t) exp(-H(t)) - V[i])
+  
+  times[i] &lt;- uniroot(Sv, lower = 0, upper = 20, extendInt = &quot;yes&quot;)$root
+}</code></pre>
+<pre><code>## Error in integrate(h, 0, t): non-finite function value</code></pre>
+<p>An alternative is calculate the result of the integral and use the
+lower incomplete function, but it needs <span class="math inline">\(-gamma_3*U2[i]*u &gt; 0\)</span>:</p>
+<pre class="r"><code>for(i in 1:m){
+  h_0_not_t &lt;- lambda*rho_s
+  h_not_t &lt;- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  
+  ifelse(gamma_3*U2[i] == 0, 
+         H &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         H &lt;- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  
+  
+  Sv &lt;- Vectorize(function(u) exp(-H(u)) - V[i])
+  
+  times[i] &lt;- uniroot(Sv, lower = 0, upper = 200, extendInt = &quot;yes&quot;)$root
+}</code></pre>
+<pre><code>## Error in uniroot(Sv, lower = 0, upper = 200, extendInt = &quot;yes&quot;): no sign change found in 1000 iterations</code></pre>
+<p>Replacing the uniroot function with the optim the code work (the
+solution found minimizes the error between <span class="math inline">\(|S_i - V_i|\)</span> and may not be a root):</p>
+<pre class="r"><code>for(i in 1:m){
+  h_0_not_t &lt;- lambda*rho_s
+  h_not_t &lt;- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  
+  ifelse(gamma_3*U2[i] == 0, 
+         H &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         H &lt;- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  
+  
+  Sv &lt;- Vectorize(function(u) abs(exp(-H(u)) - V[i]))
+  
+  times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
+}</code></pre>
+<p>However, the best solution found was to use the first code with the
+optim function:</p>
+<pre class="r"><code>for(i in 1:m){
+  h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+  H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+  Sv &lt;- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  
+  times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
+}</code></pre>
+</div>
+<div id="longitudinal-data" class="section level2">
+<h2>Longitudinal data</h2>
+<p>For the longitudinal data we create repeated observations up to time
+<span class="math inline">\(t_i\)</span>:</p>
+<pre class="r"><code>ID &lt;- longit.out &lt;- X_total &lt;- obs_times.out &lt;- vector()
+
+for(i in 1:m){
+  obs_times &lt;- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+  
+  X_t &lt;- rep(X[i], length(obs_times))
+
+  X_total &lt;- c(X_total,X_t)
+  Z = rnorm(length(obs_times), 0, sigma_z)
+  yt &lt;- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+
+  longit.out &lt;- c(longit.out,yt)
+  ID &lt;- c(ID,rep(i,length(obs_times)))
+  obs_times.out &lt;- c(obs_times.out,obs_times)
+}</code></pre>
+</div>
+</div>
+<div id="functions" class="section level1">
+<h1>Functions</h1>
+<p>Generating data:</p>
+<pre class="r"><code>#########################################################################
 # Joint model simulation
 #########################################################################
 # m   : sample size
@@ -449,20 +572,13 @@ simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma
   id_times &lt;- c(1:m)
   
   for(i in 1:m){
-    h_0_not_t &lt;- lambda*rho_s
-    h_not_t &lt;- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
-    
-    # add case gamma_3 == 0
-    
-    # result of integrate h(t). It works but it is not correct, because it needs -gamma_3*U2[i]*u &gt;= 0
-    H &lt;- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]])
-    
-    
-    Sv &lt;- Vectorize(function(u) abs(exp(-H(u)) - v[i]))
-    
-    # find t that minimizes absolute error: |S_i(t) - v[i]| (may not be a root)
-    times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf)$par
-    
+    h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+    H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+    Sv &lt;- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  
+    times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
   }
   status &lt;- as.vector(times &lt; cens_time)
   times &lt;- as.vector(ifelse(status, times, cens_time))
@@ -491,9 +607,9 @@ simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
   long.proc &lt;- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc &lt;- as.matrix(cbind(id_times, times, status)) # Survival process
-  obj &lt;- list(long.proc,surv.proc,X_total,X, obs_times.out)
-  names(obj) &lt;- c(&quot;longitudinal&quot;,&quot;survival&quot;,&quot;X_total&quot;, &quot;X&quot;, &quot;obs_times&quot;)
+  surv.proc &lt;- as.matrix(cbind(id_times, X, times, status)) # Survival process
+  obj &lt;- list(long.proc,surv.proc, obs_times.out)
+  names(obj) &lt;- c(&quot;longitudinal&quot;,&quot;survival&quot;, &quot;obs_times&quot;)
   
   return(obj)
 }</code></pre>
@@ -509,766 +625,19 @@ sigma_z &lt;- 0.25^0.5
 rho &lt;- 0.3
 n_rep_obs &lt;- 0.5
 
-obj &lt;- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)</code></pre>
-<pre><code>## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
+obj &lt;- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)
 
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
 
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)
-
-## Warning in optim(0, Sv, lower = 0, upper = Inf): bounds can only be used with
-## method L-BFGS-B (or Brent)</code></pre>
-<pre class="r"><code># Required quantities for model fitting
-X &lt;- obj$X                         # unique X    
+# Required quantities for model fitting
+X &lt;- obj$survival[,2]              # unique X    
 X_total &lt;- obj$longitudinal[,3]    # X with repeated observations
 n &lt;- nrow(X)                       # total number of observations
 y &lt;- obj$longitudinal[,2]          # longitudinal outcomes
 ID &lt;- obj$longitudinal[,1]         # patient IDs
 nid &lt;- length(unique(ID))          # number of patients
 id_times &lt;- obj$survival[,1]       # unique ids
-status &lt;- obj$survival[,3]         # vital status (1 = dead, 0 = alive)
-times &lt;- obj$survival[,2]          # times to event
+status &lt;- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
+times &lt;- obj$survival[,3]          # times to event
 obs_times &lt;- obj$obs_times         # visit times for repeated observations
 N &lt;- length(y)                     # total number of longitudinal outcomes
 nobs &lt;- length(id_times)           # number of observed survival times
@@ -1382,8 +751,12 @@ model{
   // Residual error variance
   target += inv_gamma_lpdf(sigma_z | 0.01, 0.01);   
 }</code></pre>
-<p>Testing longitudinal model:</p>
-<pre class="r"><code>X1 &lt;- as.matrix(X,ncol=1)
+</div>
+<div id="results" class="section level1">
+<h1>Results</h1>
+<pre class="r"><code>setwd(&quot;C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan&quot;)
+
+X1 &lt;- as.matrix(X,ncol=1)
 y &lt;- long_data$y
 n &lt;- nrow(X1)
 N &lt;- length(y)
@@ -1394,19 +767,17 @@ model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)</code></pre>
 <pre><code>## Warning in readLines(stan_file): linha final incompleta encontrada em
 ## &#39;code/long_model.stan&#39;</code></pre>
 <pre class="r"><code>mle &lt;- model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))</code></pre>
-<pre><code>## Initial log joint probability = -12206 
+<pre><code>## Initial log joint probability = -12837.7 
 ##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##       99      -1808.14      0.085878       180.603           1           1      117    
+##       99      -1719.31     0.0841315        177.89      0.2138           1      131    
 ##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      199      -1763.34     0.0233567       30.3139       0.506           1      232    
+##      199       -1705.6     0.0426559          29.3           1           1      248    
 ##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      299      -1761.88    0.00569035       13.8819           1           1      347    
+##      299      -1704.23   0.000817058       3.76952           1           1      364    
 ##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      399      -1761.72    0.00999446       1.20891           1           1      459    
+##      399      -1704.12   0.000337942       2.22846      0.2802      0.2802      481    
 ##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      499      -1761.71   0.000227438       1.03025     0.09304           1      567    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      507      -1761.71   0.000763543      0.205951           1           1      577    
+##      439      -1704.12   0.000287672       0.17383           1           1      528    
 ## Optimization terminated normally:  
 ##   Convergence detected: relative gradient magnitude is below tolerance 
 ## Finished in  0.3 seconds.</code></pre>
@@ -1415,7 +786,7 @@ model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)</code></pre>
 ## 
 ## Chain 1 Iteration:    1 / 2000 [  0%]  (Warmup)</code></pre>
 <pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
-<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: Sigma is not symmetric. Sigma[1,2] = inf, but Sigma[2,1] = inf (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmpoj1Cpc/model-3f207dbc5519.stan&#39;, line 61, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: Sigma is not symmetric. Sigma[1,2] = nan, but Sigma[2,1] = nan (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmpoj1Cpc/model-3f207dbc5519.stan&#39;, line 61, column 2 to column 22)</code></pre>
 <pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
 <pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
 <pre><code>## Chain 1</code></pre>
@@ -1440,39 +811,41 @@ model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)</code></pre>
 ## Chain 1 Iteration: 1800 / 2000 [ 90%]  (Sampling) 
 ## Chain 1 Iteration: 1900 / 2000 [ 95%]  (Sampling) 
 ## Chain 1 Iteration: 2000 / 2000 [100%]  (Sampling) 
-## Chain 1 finished in 70.1 seconds.</code></pre>
+## Chain 1 finished in 57.2 seconds.</code></pre>
 <pre class="r"><code>mle$summary()</code></pre>
 <pre><code>## # A tibble: 512 × 2
 ##    variable     estimate
 ##    &lt;chr&gt;           &lt;num&gt;
-##  1 lp__       -1762.    
-##  2 beta_1[1]     -0.0222
-##  3 beta_1[2]      0.966 
-##  4 beta_1[3]      1.08  
-##  5 sigma_z        0.197 
-##  6 sigma_U[1]     0.357 
-##  7 sigma_U[2]     0.773 
-##  8 rho            0.364 
-##  9 U[1,1]         0.315 
-## 10 U[2,1]         0.0695
+##  1 lp__       -1704.    
+##  2 beta_1[1]      0.0722
+##  3 beta_1[2]      0.941 
+##  4 beta_1[3]      1.12  
+##  5 sigma_z        0.194 
+##  6 sigma_U[1]     0.415 
+##  7 sigma_U[2]     0.789 
+##  8 rho            0.439 
+##  9 U[1,1]        -0.0155
+## 10 U[2,1]         0.739 
 ## # ℹ 502 more rows</code></pre>
 <pre class="r"><code>posterior_samples$summary()</code></pre>
 <pre><code>## Warning: The ESS has been capped to avoid unstable estimates.
+
+## Warning: The ESS has been capped to avoid unstable estimates.
 
 ## Warning: The ESS has been capped to avoid unstable estimates.</code></pre>
 <pre><code>## # A tibble: 512 × 10
 ##    variable       mean   median      sd     mad       q5      q95  rhat ess_bulk
 ##    &lt;chr&gt;         &lt;num&gt;    &lt;num&gt;   &lt;num&gt;   &lt;num&gt;    &lt;num&gt;    &lt;num&gt; &lt;num&gt;    &lt;num&gt;
-##  1 lp__       -2.05e+3 -2.05e+3 1.76e+1 1.82e+1 -2.08e+3 -2.02e+3 1.00     332. 
-##  2 beta_1[1]  -2.27e-2 -2.27e-2 4.69e-2 4.61e-2 -1.01e-1  5.04e-2 1.00     410. 
-##  3 beta_1[2]   9.45e-1  9.41e-1 5.33e-2 5.56e-2  8.60e-1  1.04e+0 1.03      74.5
-##  4 beta_1[3]   1.08e+0  1.07e+0 4.63e-2 4.59e-2  1.00e+0  1.15e+0 1.00     508. 
-##  5 sigma_z     2.51e-1  2.50e-1 9.60e-3 9.41e-3  2.36e-1  2.67e-1 1.00     955. 
-##  6 sigma_U[1]  4.64e-1  4.62e-1 5.26e-2 5.32e-2  3.83e-1  5.52e-1 0.999   1218. 
-##  7 sigma_U[2]  8.39e-1  8.32e-1 8.32e-2 7.98e-2  7.09e-1  9.82e-1 1.00    1705. 
-##  8 rho         2.32e-1  2.33e-1 7.05e-2 7.35e-2  1.16e-1  3.44e-1 1.00    1063. 
-##  9 U[1,1]      3.43e-1  3.40e-1 2.90e-1 3.07e-1 -1.29e-1  8.09e-1 1.00    1236. 
-## 10 U[2,1]      7.20e-2  7.85e-2 2.81e-1 2.89e-1 -3.77e-1  5.28e-1 1.00    1605. 
+##  1 lp__       -1.99e+3 -1.99e+3 1.83e+1 1.75e+1 -2.03e+3 -1.97e+3 0.999    249. 
+##  2 beta_1[1]   6.99e-2  6.98e-2 5.12e-2 5.11e-2 -1.43e-2  1.55e-1 1.00     199. 
+##  3 beta_1[2]   9.42e-1  9.43e-1 7.17e-2 7.22e-2  8.21e-1  1.07e+0 1.00      46.4
+##  4 beta_1[3]   1.12e+0  1.12e+0 4.91e-2 4.85e-2  1.04e+0  1.21e+0 1.00     327. 
+##  5 sigma_z     2.49e-1  2.49e-1 9.60e-3 9.87e-3  2.33e-1  2.64e-1 1.01    1376. 
+##  6 sigma_U[1]  5.20e-1  5.17e-1 5.87e-2 5.56e-2  4.32e-1  6.24e-1 0.999   1326. 
+##  7 sigma_U[2]  8.86e-1  8.80e-1 8.98e-2 8.84e-2  7.47e-1  1.03e+0 1.00    1324. 
+##  8 rho         3.01e-1  3.03e-1 7.11e-2 7.11e-2  1.85e-1  4.17e-1 1.00    1072. 
+##  9 U[1,1]     -2.37e-3 -1.38e-2 2.70e-1 2.50e-1 -4.39e-1  4.49e-1 1.00     924. 
+## 10 U[2,1]      7.61e-1  7.49e-1 2.85e-1 3.02e-1  3.00e-1  1.24e+0 0.999   1047. 
 ## # ℹ 502 more rows
 ## # ℹ 1 more variable: ess_tail &lt;num&gt;</code></pre>
 <p>Codes based on:</p>

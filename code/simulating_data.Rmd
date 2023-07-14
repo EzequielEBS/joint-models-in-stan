@@ -4,7 +4,7 @@ output: html_document
 date: "2023-07-11"
 ---
 
-## Models
+# Models
 
 The objective is to generate data for joint models. The longitudinal model is
 
@@ -20,7 +20,7 @@ The objective is to generate data for joint models. The longitudinal model is
 \end{align*}
 ```
 
-for individual i at time j.
+for individual i and jth observation.
 
 The model for event times is
 
@@ -34,18 +34,157 @@ The model for event times is
 \end{align*}
 ```
 
+# Description
 
-## Functions
+The following packages are needed:
+
+```{r, message=FALSE, warning=FALSE}
+library("MASS") 
+library("cmdstanr")
+library("pracma")
+```
+
+
+To generate the data we need to create $(U_1, U_2)$, $U_3$ and $X$:
+
+```{r}
+set.seed(123)
+
+m<- 250
+lambda <- 0.01
+rho_s <- 1
+cens_time <- 4
+beta <- c(0,1,1,1)
+gamma <- c(-1.5,0,2)
+sigma_U <- c(0.5^0.5,1,0.25^0.5)
+sigma_z <- 0.25^0.5
+rho <- 0.3
+n_rep_obs <- 0.5
+
+
+
+beta_11 <- beta[1]
+beta_12 <- beta[2]
+beta_13 <- beta[3]
+beta_21 <- beta[4]
+
+gamma_1 <- gamma[1] 
+gamma_2 <- gamma[2]
+gamma_3 <- gamma[3]
+
+mu_U1 <- 0
+mu_U2 <- 0
+mu_U <- c(mu_U1,mu_U2)
+sigma_U1 <- sigma_U[1]
+sigma_U2 <- sigma_U[2]
+sigma_U3 <- sigma_U[3]
+sigma_U <- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
+                  2)
+bvnU <- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
+U1 <- bvnU[,1]
+U2 <- bvnU[,2]
+U3 <- rnorm(m, 0, sigma_U3)
+
+X <- rnorm(m, 0, 1)
+```
+
+## Time-to-event data
+
+For time-to-event data, we need to compute the survival probability $S_i(t) = \exp(-H_i(t))$, where $H_i(t) = \int_{0}^{t} h_i(s)ds$ is the cumulative hazard function. To generate $S_i(t)$, we can apply the procedure described in [this article](https://onlinelibrary.wiley.com/doi/abs/10.1002/sim.2059): we generate $V_i \sim U(0,1)$ and we take $t = S_i^{-1}(V_i)$. In R, we can create $H$ as a function of $t$ and find the root of $S_i(t) - V_i = \exp(-H_i(t)) - V_i = \exp(\int_{0}^{t} h_i(s)ds) - V_i$. We can try to integrate $h_i(s)$ using the integrate function and find the root using the uniroot function, but it doesn't work:
+
+```{r, error=TRUE}
+V <- runif(n=m)
+times <- vector()
+
+for(i in 1:m){
+  h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+  H <- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+  Sv <- Vectorize(function(t) exp(-H(t)) - V[i])
+  
+  times[i] <- uniroot(Sv, lower = 0, upper = 20, extendInt = "yes")$root
+}
+```
+
+An alternative is calculate the result of the integral and use the lower incomplete function, but it needs $-gamma_3*U2[i]*u > 0$:
+
+```{r, message=FALSE, warning=FALSE, error=TRUE}
+for(i in 1:m){
+  h_0_not_t <- lambda*rho_s
+  h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  
+  ifelse(gamma_3*U2[i] == 0, 
+         H <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  
+  
+  Sv <- Vectorize(function(u) exp(-H(u)) - V[i])
+  
+  times[i] <- uniroot(Sv, lower = 0, upper = 200, extendInt = "yes")$root
+}
+```
+
+Replacing the uniroot function with the optim, the code work (the solution found minimizes the error between $|S_i - V_i|$ and may not be a root):
+
+```{r, message=FALSE, warning=FALSE, error=TRUE}
+for(i in 1:m){
+  h_0_not_t <- lambda*rho_s
+  h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  
+  ifelse(gamma_3*U2[i] == 0, 
+         H <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  
+  
+  Sv <- Vectorize(function(u) abs(exp(-H(u)) - V[i]))
+  
+  times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+}
+```
+
+However, the best solution found was to use the first code with the optim function:
+
+```{r, error=TRUE}
+for(i in 1:m){
+  h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+  H <- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+  Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  
+  times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+}
+```
+
+## Longitudinal data
+
+For the longitudinal data, we create repeated observations up to time $t_i$:
+
+```{r}
+ID <- longit.out <- X_total <- obs_times.out <- vector()
+
+for(i in 1:m){
+  obs_times <- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+  
+  X_t <- rep(X[i], length(obs_times))
+
+  X_total <- c(X_total,X_t)
+  Z = rnorm(length(obs_times), 0, sigma_z)
+  yt <- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+
+  longit.out <- c(longit.out,yt)
+  ID <- c(ID,rep(i,length(obs_times)))
+  obs_times.out <- c(obs_times.out,obs_times)
+}
+```
+
+
+# Functions
 
 Generating data:
 
 ```{r}
-library("MASS") 
-library("cmdstanr")
-library("pracma")
-
-set.seed(123)
-
 #########################################################################
 # Joint model simulation
 #########################################################################
@@ -100,20 +239,13 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   id_times <- c(1:m)
   
   for(i in 1:m){
-    h_0_not_t <- lambda*rho_s
-    h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
-    
-    # add case gamma_3 == 0
-    
-    # result of integrate h(t). It works but it is not correct, because it needs -gamma_3*U2[i]*u >= 0
-    H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]])
-    
-    
-    Sv <- Vectorize(function(u) abs(exp(-H(u)) - v[i]))
-    
-    # find t that minimizes absolute error: |S_i(t) - v[i]| (may not be a root)
-    times[i] <- optim(0, Sv, lower = 0, upper = Inf)$par
-    
+    h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  
+    H <- Vectorize(function(t) integrate(h, 0, t)$value)
+  
+    Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  
+    times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
   }
   status <- as.vector(times < cens_time)
   times <- as.vector(ifelse(status, times, cens_time))
@@ -142,9 +274,9 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
   long.proc <- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc <- as.matrix(cbind(id_times, times, status)) # Survival process
-  obj <- list(long.proc,surv.proc,X_total,X, obs_times.out)
-  names(obj) <- c("longitudinal","survival","X_total", "X", "obs_times")
+  surv.proc <- as.matrix(cbind(id_times, X, times, status)) # Survival process
+  obj <- list(long.proc,surv.proc, obs_times.out)
+  names(obj) <- c("longitudinal","survival", "obs_times")
   
   return(obj)
 }
@@ -169,15 +301,15 @@ obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho,
 
 
 # Required quantities for model fitting
-X <- obj$X                         # unique X    
+X <- obj$survival[,2]              # unique X    
 X_total <- obj$longitudinal[,3]    # X with repeated observations
 n <- nrow(X)                       # total number of observations
 y <- obj$longitudinal[,2]          # longitudinal outcomes
 ID <- obj$longitudinal[,1]         # patient IDs
 nid <- length(unique(ID))          # number of patients
 id_times <- obj$survival[,1]       # unique ids
-status <- obj$survival[,3]         # vital status (1 = dead, 0 = alive)
-times <- obj$survival[,2]          # times to event
+status <- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
+times <- obj$survival[,3]          # times to event
 obs_times <- obj$obs_times         # visit times for repeated observations
 N <- length(y)                     # total number of longitudinal outcomes
 nobs <- length(id_times)           # number of observed survival times
@@ -297,9 +429,11 @@ model{
 }
 ```
 
-Testing longitudinal model:
+# Results
 
 ```{r}
+setwd("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan")
+
 X1 <- as.matrix(X,ncol=1)
 y <- long_data$y
 n <- nrow(X1)

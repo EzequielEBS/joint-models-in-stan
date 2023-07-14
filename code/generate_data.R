@@ -2,7 +2,7 @@ library("MASS")
 library("cmdstanr")
 library("pracma")
 
-setwd("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/")
+setwd("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan")
 
 set.seed(123)
 
@@ -56,24 +56,17 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   
   # Simulating the times to event
 
-  v <- runif(n=m)
+  V <- runif(n=m)
   id_times <- c(1:m)
   
   for(i in 1:m){
-    h_0_not_t <- lambda*rho_s
-    h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+    h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
     
-    # add case gamma_3 == 0
+    H <- Vectorize(function(t) integrate(h, 0, t)$value)
     
-    # result of integrate h(t). It works but it is not correct, because it needs -gamma_3*U2[i]*u >= 0
-    H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]])
+    Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
     
-    
-    Sv <- Vectorize(function(u) abs(exp(-H(u)) - v[i]))
-    
-    # find t that minimizes absolute error: |S_i(t) - v[i]| (may not be a root)
-    times[i] <- optim(0, Sv, lower = 0, upper = Inf)$par
-    
+    times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
   }
   status <- as.vector(times < cens_time)
   times <- as.vector(ifelse(status, times, cens_time))
@@ -102,9 +95,9 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
   long.proc <- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc <- as.matrix(cbind(id_times, times, status)) # Survival process
-  obj <- list(long.proc,surv.proc,X_total,X, obs_times.out)
-  names(obj) <- c("longitudinal","survival","X_total", "X", "obs_times")
+  surv.proc <- as.matrix(cbind(id_times, X, times, status)) # Survival process
+  obj <- list(long.proc,surv.proc, obs_times.out)
+  names(obj) <- c("longitudinal","survival", "obs_times")
   
   return(obj)
 }
@@ -125,18 +118,18 @@ obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho,
 
 
 # Required quantities for model fitting
-X <- obj$X                         # unique X    
+X <- obj$survival[,2]                         # unique X    
 X_total <- obj$longitudinal[,3]    # X with repeated observations
 n <- nrow(X)                       # total number of observations
 y <- obj$longitudinal[,2]          # longitudinal outcomes
 ID <- obj$longitudinal[,1]         # patient IDs
 nid <- length(unique(ID))          # number of patients
 id_times <- obj$survival[,1]       # unique ids
-status <- obj$survival[,3]         # vital status (1 = dead, 0 = alive)
-times <- obj$survival[,2]          # times to event
+status <- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
+times <- obj$survival[,3]          # times to event
 obs_times <- obj$obs_times         # visit times for repeated observations
 N <- length(y)                     # total number of longitudinal outcomes
-nobs <- length(indobs)             # number of observed survival times
+nobs <- length(id_times)           # number of observed survival times
 
 long_data <- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
 
