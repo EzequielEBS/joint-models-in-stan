@@ -106,7 +106,7 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
 m<- 250
 lambda <- 0.01
 rho_s <- 1
-cens_time <- 4
+cens_time <- 10
 beta <- c(0,1,1,1)
 gamma <- c(-1.5,0,2)
 sigma_U <- c(0.5^0.5,1,0.25^0.5)
@@ -120,7 +120,7 @@ obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho,
 # Required quantities for model fitting
 X <- obj$survival[,2]                         # unique X    
 X_total <- obj$longitudinal[,3]    # X with repeated observations
-n <- nrow(X)                       # total number of observations
+n <- size(X)[2]                    # total number of observations
 y <- obj$longitudinal[,2]          # longitudinal outcomes
 ID <- obj$longitudinal[,1]         # patient IDs
 nid <- length(unique(ID))          # number of patients
@@ -150,11 +150,19 @@ ID <- as.numeric(long_data$id)
 obs_times <- long_data$obs_times
 
 
+
 long_model <- cmdstan_model("code/long_model.stan")
 event_model <- cmdstan_model("code/event_model.stan")
 
-mle <- long_model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
-posterior_samples <- long_model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
+long_mle <- long_model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
+long_posterior_samples <- long_model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
 
-mle$summary()
-posterior_samples$summary()
+long_mle$summary()
+long_posterior_samples$summary()
+
+
+event_mle <- event_model$optimize(data = list(n=n, nobs=nobs, X=X1, times=times, indobs=indobs))
+event_posterior_samples <- event_model$sample(data = list(n=n, nobs=nobs, X=X1, times=times, indobs=indobs), chains = 1)
+
+event_mle$summary()
+event_posterior_samples$summary()
