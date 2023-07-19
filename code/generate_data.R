@@ -60,7 +60,7 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   id_times <- c(1:m)
   
   for(i in 1:m){
-    h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+    h <- Vectorize(function(s) lambda*rho_s*s^(rho_s-1)*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
     
     H <- Vectorize(function(t) integrate(h, 0, t)$value)
     
@@ -108,7 +108,7 @@ lambda <- 0.01
 rho_s <- 1
 cens_time <- 10
 beta <- c(0,1,1,1)
-gamma <- c(-1.5,0,2)
+gamma <- c(-1.5,0,0)
 sigma_U <- c(0.5^0.5,1,0.25^0.5)
 sigma_z <- 0.25^0.5
 rho <- 0.3
@@ -166,3 +166,4 @@ event_posterior_samples <- event_model$sample(data = list(n=n, nobs=nobs, X=X1, 
 
 event_mle$summary()
 event_posterior_samples$summary()
+

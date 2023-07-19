@@ -13,10 +13,25 @@ functions{
       real gamma_3 = theta[2];
       real U2i = theta[3];
       
+      real h = t^(rho_s-1)*exp(gamma_3*U2i*t);
+        
+      return h;    
+    }
+    
+    real integrand_bp(real t,
+             real xc,                
+             array[] real theta,     
+             array[] real x_r,                        
+             array[] int x_i) {
+      real rho_s = theta[1];
+      real gamma_3 = theta[2];
+      real U2i = theta[3];
+      
       real h = t^rho_s*exp(gamma_3*U2i*t);
         
       return h;    
     }
+  
   
   
   
@@ -33,13 +48,13 @@ functions{
     }
 
     // Cumulative hazard function
-    vector const_term_logcumhaz(vector t, matrix X, vector U1, vector U2, vector U3, vector gamma, real beta_21, real lambda, real rho_s){
+    vector const_term_cumhaz(vector t, matrix X, vector U1, vector U2, vector U3, vector gamma, real beta_21, real lambda, real rho_s){
          vector[num_elements(t)] out;
          real gamma_1 = gamma[1];
          real gamma_2 = gamma[2];
          real gamma_3 = gamma[3];
          for(i in 1:num_elements(t)){
-            out[i] = log(lambda) + log(rho_s) + beta_21*X[i,1] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*U1[i];
+            out[i] = lambda*rho_s*exp(beta_21*X[i,1] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*U1[i] + U3[i]);
          }
          return out;
     }
@@ -75,9 +90,9 @@ parameters{
 transformed parameters{
   cov_matrix[2] Sigma;
 
-  Sigma[1,1] = sigma_U[1];
-  Sigma[2,2] = sigma_U[2];
-  Sigma[1,2] = sqrt(sigma_U[1]*sigma_U[2])*rho;
+  Sigma[1,1] = sigma_U[1]^2;
+  Sigma[2,2] = sigma_U[2]^2;
+  Sigma[1,2] = sigma_U[1]*sigma_U[2]*rho;
   Sigma[2,1] = Sigma[1,2];
 }
 
@@ -91,30 +106,44 @@ model {
    vector[nobs] unc_times;
    
    unc_times = times[indobs];
+   vector[n] lsurv;
    
    // Log-hazard function
    lhaz = loghaz(unc_times, X[indobs,], U[indobs,1], U[indobs,2], U3[indobs], gamma, beta_21, lambda, rho_s);
+   
+   
    // // Log-survival function
-   // lsurv = -cumhaz(times, X, U[1:n,1], U[1:n,2], U3, gamma, beta_21, lambda, rho_s);
-   
-   vector[n] lsurv;
-   
-   lsurv = const_term_logcumhaz(times, X, U[1:n,1], U[1:n,2], U3, gamma, beta_21, lambda, rho_s);
+   lsurv = -const_term_cumhaz(times, X, U[1:n,1], U[1:n,2], U3, gamma, beta_21, lambda, rho_s);
    
    for (i in 1:n) {
-     lsurv[i] = lsurv[i] + log(times[i]^rho_s*exp(gamma[3]*U[i,2]*times[i])-gamma[3]*U[i,2]*integrate_1d(integrand,
-                                                    0.0,
-                                                    times[i],
-                                                    {rho_s, gamma[3], U[i,2]},
-                                                    x_r,
-                                                    x_i,
-                                                    0.01
-                                                    ))
-                                                    -log(rho_s);
+     lsurv[i] = lsurv[i]*(1/rho_s)*
+                (times[i]^rho_s*exp(gamma[3]*U[i,2]*times[i]) -
+                    gamma[3]*U[i,2]*
+                    integrate_1d(integrand_bp,
+                                 0.0,
+                                 times[i],
+                                 {rho_s, gamma[3], U[i,2]},
+                                 x_r,
+                                 x_i,
+                                 0.01
+                                 )
+                    );
    }
+
+   // for (i in 1:n) {
+   //   lsurv[i] = lsurv[i] *
+   //              integrate_1d(integrand,
+   //                           0.0,
+   //                           times[i],
+   //                           {rho_s, gamma[3], U[i,2]},
+   //                           x_r,
+   //                           x_i,
+   //                           0.01
+   //                           );
+   // }
    
    
-   
+   // Survival log-likelihood
    target += sum(lhaz) + sum(lsurv); 
    
    
@@ -123,10 +152,10 @@ model {
       // Survival fixed effects
    target += normal_lpdf(beta_21 | 0, 100);
 
-   // PGW scale parameter
+   // W scale parameter
    target += cauchy_lpdf(lambda | 0, 1);
 
-   // PGW shape parameters
+   // W shape parameter
    target += cauchy_lpdf(rho_s | 0, 1);
 
    // Association parameters
@@ -140,6 +169,7 @@ model {
 
    // Random-effects variance
    target += inv_gamma_lpdf(sigma_U | 0.01, 0.01);
+   target += inv_gamma_lpdf(sigma_U3 | 0.01, 0.01);
 
    // Random-effects correlation
    target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
