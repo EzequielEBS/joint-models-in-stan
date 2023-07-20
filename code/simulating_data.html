@@ -361,7 +361,7 @@ display: none;
 model is</p>
 <span class="math display">\[\begin{align*}
   Y_{ij} &amp;= \beta_{11} + \beta_{12}t_{ij} + \beta_{13}X_i + U_{1i} +
-U_{2i}t_{ij} + Z_{ij},
+  U_{2i}t_{ij} + Z_{ij},
   \\
   X_i &amp;\sim N(0,1),
   \\
@@ -373,7 +373,7 @@ U_{2i}t_{ij} + Z_{ij},
 <p>The model for event times is</p>
 <span class="math display">\[\begin{align*}
   h_i(t_i) &amp;= h_{0i}(t_i) \exp\{\beta_{21}X_i + \gamma_1 U_{1i} +
-\gamma_2 U_{2i} + \gamma_3(U_{1i} + U_{2i}t_i) + U_{3i}\},
+  \gamma_2 U_{2i} + \gamma_3(U_{1i} + U_{2i}t_i) + U_{3i}\},
   \\
   U_{3i} &amp;\sim N(0, \sigma_3),
   \\
@@ -390,18 +390,16 @@ library(&quot;pracma&quot;)</code></pre>
 <p>To generate the data we need to create <span class="math inline">\((U_1, U_2)\)</span>, <span class="math inline">\(U_3\)</span> and <span class="math inline">\(X\)</span>:</p>
 <pre class="r"><code>set.seed(123)
 
-m&lt;- 250
-lambda &lt;- 0.01
-rho_s &lt;- 1
-cens_time &lt;- 4
+N&lt;- 250
+lambda &lt;- 1
+rho_s &lt;- 2
+cens_time &lt;- 6
 beta &lt;- c(0,1,1,1)
-gamma &lt;- c(-1.5,0,2)
-sigma_U &lt;- c(0.5^0.5,1,0.25^0.5)
-sigma_z &lt;- 0.25^0.5
-rho &lt;- 0.3
+gamma &lt;- c(-1,1,1)
+var_u &lt;- c(1,1,1)
+var_z &lt;- 0.25
+rho &lt;- 0.5
 n_rep_obs &lt;- 0.5
-
-
 
 beta_11 &lt;- beta[1]
 beta_12 &lt;- beta[2]
@@ -412,20 +410,20 @@ gamma_1 &lt;- gamma[1]
 gamma_2 &lt;- gamma[2]
 gamma_3 &lt;- gamma[3]
 
-mu_U1 &lt;- 0
-mu_U2 &lt;- 0
-mu_U &lt;- c(mu_U1,mu_U2)
-sigma_U1 &lt;- sigma_U[1]
-sigma_U2 &lt;- sigma_U[2]
-sigma_U3 &lt;- sigma_U[3]
-sigma_U &lt;- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
-                  2)
-bvnU &lt;- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
-U1 &lt;- bvnU[,1]
-U2 &lt;- bvnU[,2]
-U3 &lt;- rnorm(m, 0, sigma_U3)
+mu_u1 &lt;- 0
+mu_u2 &lt;- 0
+mu_u &lt;- c(mu_u1,mu_u2)
+var_u1 &lt;- var_u[1]
+var_u2 &lt;- var_u[2]
+var_u3 &lt;- var_u[3]
+sigma &lt;- matrix(c(var_u1, sqrt(var_u1*var_u2)*rho, 
+                  sqrt(var_u1*var_u2)*rho, var_u2), 2)
+bvn_u &lt;- mvrnorm(N, mu = mu_u, Sigma = sigma)
+u_1 &lt;- bvn_u[,1]
+u_2 &lt;- bvn_u[,2]
+u_3 &lt;- rnorm(N, 0, var_u3)
 
-X &lt;- rnorm(m, 0, 1)</code></pre>
+x &lt;- rnorm(N, 0, 1)</code></pre>
 <div id="time-to-event-data" class="section level2">
 <h2>Time-to-event data</h2>
 <p>For time-to-event data, we need to compute the survival probability
@@ -438,106 +436,110 @@ S_i^{-1}(V_i)\)</span>. In R, we can create <span class="math inline">\(H\)</spa
 \exp(\int_{0}^{t} h_i(s)ds) - V_i\)</span>. We can try to integrate
 <span class="math inline">\(h_i(s)\)</span> using the integrate function
 and find the root using the uniroot function, but it doesn’t work:</p>
-<pre class="r"><code>V &lt;- runif(n=m)
+<pre class="r"><code>v &lt;- runif(n=N)
 times &lt;- vector()
 
-for(i in 1:m){
-  h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+for(i in 1:N){
+  haz &lt;- Vectorize(function(s) {
+    lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+    gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+  })
   
-  H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
+  cum_haz &lt;- Vectorize(function(t) integrate(haz, 0, t)$value)
   
-  Sv &lt;- Vectorize(function(t) exp(-H(t)) - V[i])
+  sv &lt;- Vectorize(function(t) exp(-cum_haz(t)) - v[i])
   
-  times[i] &lt;- uniroot(Sv, lower = 0, upper = 20, extendInt = &quot;yes&quot;)$root
+  times[i] &lt;- uniroot(sv, lower = 0, upper = 200)$root
 }</code></pre>
-<pre><code>## Error in integrate(h, 0, t): non-finite function value</code></pre>
+<pre><code>## Error in uniroot(sv, lower = 0, upper = 200): valores f() nas extremidades não têm sinais opostos</code></pre>
 <p>An alternative is calculate the result of the integral and use the
-lower incomplete gamma function, but it needs <span class="math inline">\(-gamma_3*U2[i]*u &gt; 0\)</span>:</p>
-<pre class="r"><code>for(i in 1:m){
+lower incomplete gamma function, but it needs <span class="math inline">\(-gamma_3*u_2[i]*u &gt; 0\)</span>:</p>
+<pre class="r"><code>for(i in 1:N){
   h_0_not_t &lt;- lambda*rho_s
-  h_not_t &lt;- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  h_not_t &lt;- h_0_not_t*exp(beta_21*x[i] + gamma_1*u_1[i] + gamma_2*u_2[i] + 
+             gamma_3*(u_1[i]) + u_3[i])
   
-  ifelse(gamma_3*U2[i] == 0, 
-         H &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
-         H &lt;- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  ifelse(gamma_3*u_2[i] == 0, 
+         cum_haz &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         cum_haz &lt;- Vectorize(function(u) h_not_t*(-gamma_3*u_2[i])^(-rho_s)*
+                    pracma::gammainc(-gamma_3*u_2[i]*u, rho_s)[[1]]))
   
+  sv &lt;- Vectorize(function(u) exp(-cum_haz(u)) - v[i])
   
-  Sv &lt;- Vectorize(function(u) exp(-H(u)) - V[i])
-  
-  times[i] &lt;- uniroot(Sv, lower = 0, upper = 200, extendInt = &quot;yes&quot;)$root
+  times[i] &lt;- uniroot(sv, lower = 0, upper = 200)$root
 }</code></pre>
-<pre><code>## Error in uniroot(Sv, lower = 0, upper = 200, extendInt = &quot;yes&quot;): no sign change found in 1000 iterations</code></pre>
+<pre><code>## Error in uniroot(sv, lower = 0, upper = 200): valores f() nas extremidades não têm sinais opostos</code></pre>
 <p>Replacing the uniroot function with the optim, the code work (the
 solution found minimizes the error of <span class="math inline">\(|S_i -
 V_i|\)</span> and may not be a root):</p>
-<pre class="r"><code>for(i in 1:m){
+<pre class="r"><code>for(i in 1:N){
   h_0_not_t &lt;- lambda*rho_s
-  h_not_t &lt;- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  h_not_t &lt;- h_0_not_t*exp(beta_21*x[i] + gamma_1*u_1[i] + gamma_2*u_2[i] + 
+             gamma_3*(u_1[i]) + u_3[i])
   
-  ifelse(gamma_3*U2[i] == 0, 
-         H &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
-         H &lt;- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  ifelse(gamma_3*u_2[i] == 0, 
+         cum_haz &lt;- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         cum_haz &lt;- Vectorize(function(u) h_not_t*(-gamma_3*u_2[i])^(-rho_s)*
+                    pracma::gammainc(-gamma_3*u_2[i]*u, rho_s)[[1]]))
   
+  sv &lt;- Vectorize(function(u) abs(exp(-cum_haz(u)) - v[i]))
   
-  Sv &lt;- Vectorize(function(u) abs(exp(-H(u)) - V[i]))
-  
-  times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
+  times[i] &lt;- optim(0, sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
 }</code></pre>
 <p>However, the best solution found was to use the first code with the
 optim function:</p>
-<pre class="r"><code>for(i in 1:m){
-  h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+<pre class="r"><code>for(i in 1:N){
+  haz &lt;- Vectorize(function(s) {
+    lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+    gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+  })
   
-  H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
+  cum_haz &lt;- Vectorize(function(t) integrate(haz, 0, t)$value)
   
-  Sv &lt;- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  sv &lt;- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
   
-  times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
+  times[i] &lt;- optim(0, sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
 }</code></pre>
 </div>
 <div id="longitudinal-data" class="section level2">
 <h2>Longitudinal data</h2>
 <p>For the longitudinal data, we create repeated observations up to time
 <span class="math inline">\(t_i\)</span>:</p>
-<pre class="r"><code>ID &lt;- longit.out &lt;- X_total &lt;- obs_times.out &lt;- vector()
+<pre class="r"><code>id &lt;- long_out &lt;- x_total &lt;- obs_times_out &lt;- vector()
 
-for(i in 1:m){
-  obs_times &lt;- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+for(i in 1:N){
+  # number of repeated observations for each individual
+  obs_times &lt;- seq(0,times[i], by = n_rep_obs) 
   
-  X_t &lt;- rep(X[i], length(obs_times))
+  x_t &lt;- rep(x[i], length(obs_times))
 
-  X_total &lt;- c(X_total,X_t)
-  Z = rnorm(length(obs_times), 0, sigma_z)
-  yt &lt;- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+  x_total &lt;- c(x_total,x_t)
+  z = rnorm(length(obs_times), 0, var_z)
+  yt &lt;- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
+    rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
+    obs_times + z
 
-  longit.out &lt;- c(longit.out,yt)
-  ID &lt;- c(ID,rep(i,length(obs_times)))
-  obs_times.out &lt;- c(obs_times.out,obs_times)
+  long_out &lt;- c(long_out,yt)
+  id &lt;- c(id,rep(i,length(obs_times)))
+  obs_times_out &lt;- c(obs_times_out,obs_times)
 }</code></pre>
 </div>
 </div>
 <div id="functions" class="section level1">
 <h1>Functions</h1>
 <p>Generating data:</p>
-<pre class="r"><code>#########################################################################
-# Joint model simulation
-#########################################################################
-# m   : sample size
-# lambda &gt; 0: scale for Weibull baseline hazard 
-# rho &gt; 0: shape for Weibull baseline hazard
-# cens_time: censored time
-# beta: vector of covariates
-# gamma: vector of association coefficients
-# sigma_U: vector with variances of U1, U2 and U3
-# sigma_z: standard deviation of measurement errors 
-# rho: correlation between U1 and U2
-# n_rep_obs: number of repeated observations for each individual
-
-
-
-simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs){
+<pre class="r"><code>sim_data &lt;- function(N, 
+                     lambda, 
+                     rho_s, 
+                     cens_time, 
+                     beta, 
+                     gamma, 
+                     var_u, 
+                     var_z, 
+                     rho, 
+                     n_rep_obs){
   
-  times &lt;- ID &lt;- longit.out &lt;- X_total &lt;- vector()
+  times &lt;- id &lt;- long_out &lt;- x_total &lt;- vector()
   
   beta_11 &lt;- beta[1]
   beta_12 &lt;- beta[2]
@@ -548,20 +550,20 @@ simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma
   gamma_2 &lt;- gamma[2]
   gamma_3 &lt;- gamma[3]
   
-  mu_U1 &lt;- 0
-  mu_U2 &lt;- 0
-  mu_U &lt;- c(mu_U1,mu_U2)
-  sigma_U1 &lt;- sigma_U[1]
-  sigma_U2 &lt;- sigma_U[2]
-  sigma_U3 &lt;- sigma_U[3]
-  sigma_U &lt;- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
-                    2)
-  bvnU &lt;- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
-  U1 &lt;- bvnU[,1]
-  U2 &lt;- bvnU[,2]
-  U3 &lt;- rnorm(m, 0, sigma_U3)
+  mu_u1 &lt;- 0
+  mu_u2 &lt;- 0
+  mu_u &lt;- c(mu_u1,mu_u2)
+  var_u1 &lt;- var_u[1]
+  var_u2 &lt;- var_u[2]
+  var_u3 &lt;- var_u[3]
+  sigma &lt;- matrix(c(var_u1, sqrt(var_u1*var_u2)*rho, 
+                    sqrt(var_u1*var_u2)*rho, var_u2), 2)
+  bvn_u &lt;- mvrnorm(N, mu = mu_u, Sigma = sigma)
+  u_1 &lt;- bvn_u[,1]
+  u_2 &lt;- bvn_u[,2]
+  u_3 &lt;- rnorm(N, 0, var_u3)
   
-  X &lt;- rnorm(m, 0, 1)
+  x &lt;- rnorm(N, 0, 1)
   
   ###################
   # Survival process
@@ -569,18 +571,22 @@ simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma
   
   # Simulating the times to event
 
-  v &lt;- runif(n=m)
-  id_times &lt;- c(1:m)
+  v &lt;- runif(n=N)
+  id_times &lt;- c(1:N)
   
-  for(i in 1:m){
-    h &lt;- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
-  
-    H &lt;- Vectorize(function(t) integrate(h, 0, t)$value)
-  
-    Sv &lt;- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
-  
-    times[i] &lt;- optim(0, Sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
+  for(i in 1:N){
+    haz &lt;- Vectorize(function(s) {
+      lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+      gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+    })
+    
+    cum_haz &lt;- Vectorize(function(t) integrate(haz, 0, t)$value)
+
+    sv &lt;- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
+
+    times[i] &lt;- optim(1e-6, sv, lower = 0, upper = Inf, method = &quot;L-BFGS-B&quot;)$par
   }
+  
   status &lt;- as.vector(times &lt; cens_time)
   times &lt;- as.vector(ifelse(status, times, cens_time))
   status &lt;- as.numeric(status) # Censoring indicators (1=Observed, 0=Censored)
@@ -589,187 +595,612 @@ simDataJ &lt;- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma
   # Longitudinal process  
   ##############################
   
-  obs_times.out &lt;- vector()
-  for(i in 1:m){
-    obs_times &lt;- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+  obs_times_out &lt;- vector()
+  for(i in 1:N){
+    # number of repeated observations for each individual
+    obs_times &lt;- seq(0,times[i], by = n_rep_obs) 
     
-    X_t &lt;- rep(X[i], length(obs_times))
+    x_t &lt;- rep(x[i], length(obs_times))
 
-    X_total &lt;- c(X_total,X_t)
-    Z = rnorm(length(obs_times), 0, sigma_z)
-    yt &lt;- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+    x_total &lt;- c(x_total,x_t)
+    z = rnorm(length(obs_times), 0, sqrt(var_z))
+    y_t &lt;- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
+          rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
+          obs_times + z
 
-    longit.out &lt;- c(longit.out,yt)
-    ID &lt;- c(ID,rep(i,length(obs_times)))
-    obs_times.out &lt;- c(obs_times.out,obs_times)
+    long_out &lt;- c(long_out,y_t)
+    id &lt;- c(id,rep(i,length(obs_times)))
+    obs_times_out &lt;- c(obs_times_out,obs_times)
   }
   
   #---------------------------------------------------------------------
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
-  long.proc &lt;- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc &lt;- as.matrix(cbind(id_times, X, times, status)) # Survival process
-  obj &lt;- list(long.proc,surv.proc, obs_times.out)
-  names(obj) &lt;- c(&quot;longitudinal&quot;,&quot;survival&quot;, &quot;obs_times&quot;)
+  long_proc &lt;- as.matrix(cbind(id, long_out, x_total, obs_times_out)) 
+  surv_proc &lt;- as.matrix(cbind(id_times, x, times, status)) 
+  data &lt;- list(long_proc, surv_proc)
+  names(data) &lt;- c(&quot;longitudinal&quot;,&quot;survival&quot;)
   
-  return(obj)
+  return(data)
 }</code></pre>
 <p>Creating data:</p>
-<pre class="r"><code>m&lt;- 250
-lambda &lt;- 0.01
-rho_s &lt;- 1
-cens_time &lt;- 4
+<pre class="r"><code>N&lt;- 100
+lambda &lt;- 1
+rho_s &lt;- 2
+cens_time &lt;- 6
 beta &lt;- c(0,1,1,1)
-gamma &lt;- c(-1.5,0,2)
-sigma_U &lt;- c(0.5^0.5,1,0.25^0.5)
-sigma_z &lt;- 0.25^0.5
-rho &lt;- 0.3
+gamma &lt;- c(0,0,0)
+var_u &lt;- c(0.5,0.5,0.5)
+var_z &lt;- 0.25
+rho &lt;- 0.5
 n_rep_obs &lt;- 0.5
 
-obj &lt;- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)
-
-
-# Required quantities for model fitting
-X &lt;- obj$survival[,2]              # unique X    
-X_total &lt;- obj$longitudinal[,3]    # X with repeated observations
-n &lt;- nrow(X)                       # total number of observations
-y &lt;- obj$longitudinal[,2]          # longitudinal outcomes
-ID &lt;- obj$longitudinal[,1]         # patient IDs
-nid &lt;- length(unique(ID))          # number of patients
-id_times &lt;- obj$survival[,1]       # unique ids
-status &lt;- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
-times &lt;- obj$survival[,3]          # times to event
-obs_times &lt;- obj$obs_times         # visit times for repeated observations
-N &lt;- length(y)                     # total number of longitudinal outcomes
-nobs &lt;- length(id_times)           # number of observed survival times
-
-long_data &lt;- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
-
-
-time_data &lt;- data.frame(id=id_times,
-                        times=times,
-                        status=status,
-                        X=X)</code></pre>
+data &lt;- sim_data(N, 
+                 lambda, 
+                 rho_s, 
+                 cens_time, 
+                 beta, 
+                 gamma, 
+                 var_u, 
+                 var_z, 
+                 rho, 
+                 n_rep_obs)</code></pre>
 <p>Stan model for longitudinal process:</p>
 <pre class="stan"><code>functions{
-  // ------------------------------------------------------
-  //     LINEAR PREDICTOR FOR THE LONGITUDINAL SUBMODEL                
-  // ------------------------------------------------------ 
-    vector linear_predictor(matrix X, vector obs_times, int[] ID, vector beta_1, matrix U){
-      int N = num_elements(obs_times);
-      vector[N] out;
-      
-      out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*X[ID,1] + U[ID,1] + rows_dot_product(U[ID,2],obs_times);
-      
-      return out;
-    } 
-  // ------------------------------------------------------ 
+  /**
+  * Return a vector corresponding to linear predictor for longitudinal
+  * sub-model.
+  *
+  * @param x Matrix of covariates
+  * @param obs_times Vector of observed times
+  * @param id Vector of integer values corrensponding to identifiers for each
+           subject
+  * @param beta_1 Vector corresponding to fixed effects
+  * @param u Vector corresponding random effects.
+  * @return Linear predictor vector.
+  */
+  vector linear_predictor(matrix x, 
+                          vector obs_times, 
+                          array[] int id, 
+                          vector beta_1, 
+                          matrix u){
+    int N = num_elements(obs_times);
+    vector[N] out;
+    
+    out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*x[id,1] + u[id,1] + 
+          rows_dot_product(u[id,2],obs_times);
+    
+    return out;
+  } 
 }
 
 
 data{
+  int n_obs;
   int N;
-  int n;
-  vector[N] y;
-  matrix[n,1] X1;
-  int&lt;lower=1,upper=n&gt; ID[N];
-  vector[N] obs_times;
+  vector[n_obs] y;
+  matrix[N,1] x;
+  array[n_obs] int&lt;lower=1,upper=N&gt; id;
+  vector[n_obs] obs_times;
 }
 
 
 parameters{
   vector[3] beta_1;
-  real&lt;lower=0&gt; sigma_z;
-  real&lt;lower=0&gt; sigma_U[2];
+  real&lt;lower=0&gt; var_z;
+  array[2] real&lt;lower=0&gt; var_u;
   real&lt;lower=-1, upper=1&gt; rho;
-  matrix[n,2] U;
+  matrix[N,2] u;
 }
 
 transformed parameters{
-  cov_matrix[2] Sigma;
+  cov_matrix[2] sigma;
 
-  Sigma[1,1] = sigma_U[1]^2;
-  Sigma[2,2] = sigma_U[2]^2;
-  Sigma[1,2] = sigma_U[1]*sigma_U[2]*rho;
-  Sigma[2,1] = Sigma[1,2];
+  sigma[1,1] = var_u[1];
+  sigma[2,2] = var_u[2];
+  sigma[1,2] = sqrt(var_u[1]*var_u[2])*rho;
+  sigma[2,1] = sigma[1,2];
 }
 
 
 model{
   // ------------------------------------------------------
-    //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
+  //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
   // ------------------------------------------------------
-    {
-      vector[N] linpred; 
-      
-      // Linear predictor
-      linpred = linear_predictor(X1, obs_times, ID, beta_1, U);
-      
-      // Longitudinal Normal log-likelihood
-      target += normal_lpdf(y | linpred, sigma_z);
-    }  
+  
+  vector[n_obs] linpred; 
+
+  // Linear predictor
+  linpred = linear_predictor(x, obs_times, id, beta_1, u);
+
+  // Longitudinal Normal log-likelihood
+  target += normal_lpdf(y | linpred, sqrt(var_z));
 
   // ------------------------------------------------------
-    //                       LOG-PRIORS                       
+  //                       LOG-PRIORS                       
   // ------------------------------------------------------
-    // Longitudinal fixed effects
+    
+  // Longitudinal fixed effects
   target += normal_lpdf(beta_1 | 0, 100);
   
-  // Random-effects
-   for(i in 1:n){ target += multi_normal_lpdf(U[i,1:2] | rep_vector(0.0,2), Sigma); }
+  // Random effects
+  for(i in 1:N){ 
+    target += multi_normal_lpdf(u[i,1:2] | rep_vector(0.0,2), sigma);
+  }
 
-   // Random-effects variance
-   target += inv_gamma_lpdf(sigma_U | 0.01, 0.01);
+  // Random effects variance
+  target += inv_gamma_lpdf(var_u | 0.01, 0.01);
 
-   // Random-effects correlation
-   target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
+  // Random effects correlation
+  target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
   
   // Residual error variance
-  target += inv_gamma_lpdf(sigma_z | 0.01, 0.01);   
+  target += inv_gamma_lpdf(var_z | 0.01, 0.01);
 }</code></pre>
+<p>Stan model for survival process:</p>
+<pre class="stan"><code>functions{
+  /**
+  * Return a real number corresponding to function function to be integrated 
+  * evaluated at point t.
+  *
+  * @param t Value to evaluate function  
+  * @param xc A high precision version of the distance from x to the nearest 
+  *        endpoint in a definite integral
+  * @param theta Parameter values used to evaluate the integral
+  * @param x_r Data values used to evaluate the integral
+  * @param x_i Integer data used to evaluate the integral.
+  * @return The value of the integrand evaluated at the point x.
+  */
+  real integrand(real t, 
+                 real xc, 
+                 array[] real theta, 
+                 array[] real x_r, 
+                 array[] int x_i) {
+    real rho_s = theta[1];
+    real gamma_3 = theta[2];
+    real u_2i = theta[3];
+    
+    real h = t^(rho_s-1)*exp(gamma_3*u_2i*t);
+      
+    return h;    
+  }
+  
+  /**
+  * Return a real number corresponding to function to be integrated 
+  * evaluated at point t.
+  *
+  * @param t Value to evaluate function  
+  * @param xc A high precision version of the distance from x to the nearest 
+  *        endpoint in a definite integral
+  * @param theta Parameter values used to evaluate the integral
+  * @param x_r Data values used to evaluate the integral
+  * @param x_i Integer data used to evaluate the integral.
+  * @return The value of the integrand evaluated at the point x.
+  */
+  real integrand_bp(real t,
+                    real xc,                
+                    array[] real theta,     
+                    array[] real x_r,                        
+                    array[] int x_i) {
+    real rho_s = theta[1];
+    real gamma_3 = theta[2];
+    real u_2i = theta[3];
+    
+    real h = t^rho_s*exp(gamma_3*u_2i*t);
+      
+    return h;    
+  }
+
+  /**
+  * Return a Laplace approximation of specific function.
+  *
+  * @param a Lower limit to evaluate integral  
+  * @param b Upper limit to evaluate integral
+  * @param rho_s Shape of the Weibull baseline hazard
+  * @param gamma_3 3th association parameter
+  * @param u_2i ith value of the second random effect.
+  * @return The integral approximation.
+  */
+  real lap_app(real a, real b, real rho_s, real gamma_3, real u_2i){
+    real t0 = (1-rho_s)/(gamma_3*u_2i);
+    real h_t0 = (rho_s-1)*log(t0) + gamma_3*u_2i*t0;
+    real ddh_t0 = (1-rho_s)/(t0^2);
+    real lout = h_t0 + 0.5*(log(2) + log(pi()) - log(-ddh_t0)) +
+                log(normal_cdf(b, t0, -ddh_t0) -
+                normal_cdf(a, t0, -ddh_t0));
+    // real out = exp(h_t0)*sqrt(2*pi()/(-ddh_t0))*
+    //            (normal_cdf(b, t0, -ddh_t0) -
+    //            normal_cdf(a, t0, -ddh_t0));
+    return exp(lout);
+  }
+
+  /**
+  * Return a lower incomplete gamma function aproximation.
+  *
+  * @param a Integrand parameter  
+  * @param z Upper limit to evaluate integral
+  * @param tol Aproximation tolerance
+  * @return The approximation.
+  */
+  real low_inc_gamma(real a, real z, real tol) {
+    real inc_gamma;
+    
+    if (z &lt; -50) {
+      int n = 0;
+      real inc_gamma0 = (1-a)/(z^n);
+      real inc_gamma1 = inc_gamma0 + 1;
+      while (abs(inc_gamma1 - inc_gamma0) &gt; tol){
+        n += 1;
+        inc_gamma1 = inc_gamma0;
+        inc_gamma0 += (1-a)/(z^n);
+      }
+      inc_gamma = exp(z)/(z*tgamma(a))*inc_gamma0;
+    }
+    else {
+      int n = 0;
+      real inc_gamma0 = (-z)^n/(tgamma(n+1)*(a+n));
+      real inc_gamma1 = inc_gamma0 + 1;
+      while (abs(inc_gamma1 - inc_gamma0) &gt; tol){
+        n += 1;
+        inc_gamma1 = inc_gamma0;
+        inc_gamma0 += (-z)^n/(tgamma(n+1)*(a+n));
+      }
+      inc_gamma = 1/(tgamma(a))*inc_gamma0;
+    }
+    real out = z^a*tgamma(a)*inc_gamma;
+    return out;
+  }
+  
+  /**
+  * Return a vector with each value out[i] corresponding to logarithm hazard 
+  * function evaluated at point t[i].
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard
+  * @param id Array corresponding to subjects to evaluate the function.
+  * @return Vector corresponding to logarithm hazard function evaluated at 
+  * observed times.
+  */
+  vector log_haz(vector t, 
+                matrix x, 
+                vector u_1, 
+                vector u_2, 
+                vector u_3, 
+                vector gamma, 
+                real beta_21, 
+                real lambda, 
+                real rho_s,
+                array[] int id){
+    int N = num_elements(id);
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = rep_vector(log(lambda), N) + rep_vector(log(rho_s), N) + (rho_s-1)*
+          log(t[id]) + beta_21*x[id,1] + gamma_1*u_1[id] + gamma_2*u_2[id] +
+          gamma_3*(u_1[id] + rows_dot_product(u_2[id],t[id])) + u_3[id];
+    return out;
+  }
+
+  /**
+  * Return a vector with each value out[i] corresponding to constant terms of
+  * the cumulative hazard function evaluated at point t[i]
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard.
+  * @return Vector corresponding to constant terms of the cumulative hazard 
+  * function evaluated at observed times.
+  */
+  vector const_term_cum_haz(vector t, 
+                           matrix x, 
+                           vector u_1, 
+                           vector u_2, 
+                           vector u_3, 
+                           vector gamma, 
+                           real beta_21, 
+                           real lambda, 
+                           real rho_s){
+    int N = num_elements(t);                         
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = lambda*rho_s*exp(beta_21*x[1:N,1] + gamma_1*u_1 + 
+          gamma_2*u_2 + gamma_3*u_1 + u_3);
+    return out;
+  }
+  
+  /**
+  * Return a vector with each value out[i] corresponding to log constant terms 
+  * of the cumulative hazard function evaluated at point t[i]
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard.
+  * @return Vector corresponding to log constant terms of the cumulative hazard 
+  * function evaluated at observed times.
+  */
+    
+  vector lconst_term_cum_haz(vector t, 
+                             matrix x, 
+                             vector u_1, 
+                             vector u_2, 
+                             vector u_3, 
+                             vector gamma, 
+                             real beta_21, 
+                             real lambda, 
+                             real rho_s){
+    int N = num_elements(t);
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = rep_vector(log(lambda), N) + rep_vector(log(rho_s), N) +
+           beta_21*x[1:N,1] + gamma_1*u_1 + gamma_2*u_2 + gamma_3*u_1 + u_3;
+    return out;
+  }
+}
+
+
+data{
+  int N;
+  int n_unc_times;
+  matrix[N,1] x;
+  vector[N] times;
+  array[n_unc_times] int&lt;lower=1,upper=N&gt; ind_unc_times;
+}
+
+transformed data {
+  array[0] real x_r;
+  array[0] int x_i;
+}
+
+parameters{
+  real beta_21;
+  vector[3] gamma;
+  real&lt;lower=0&gt; lambda;
+  real&lt;lower=0&gt; rho_s;
+  array[2] real&lt;lower=0&gt; var_u;
+  real&lt;lower=-1, upper=1&gt; rho;
+  real&lt;lower=0&gt; var_u3;
+  matrix[N,2] u;
+  vector[N] u_3;
+}
+
+transformed parameters{
+  cov_matrix[2] sigma;
+
+  sigma[1,1] = var_u[1];
+  sigma[2,2] = var_u[2];
+  sigma[1,2] = sqrt(var_u[1]*var_u[2])*rho;
+  sigma[2,1] = sigma[1,2];
+}
+
+
+model {
+  // ------------------------------------------------------
+  //          LOG-LIKELIHOOD FOR SURVIVAL SUBMODEL                
+  // ------------------------------------------------------
+  
+  vector[n_unc_times] lhaz;
+
+  vector[N] lsurv;
+  
+  // Log-hazard function
+  lhaz = log_haz(times,
+                x,
+                u[1:N,1],
+                u[1:N,2],
+                u_3,
+                gamma,
+                beta_21,
+                lambda,
+                rho_s,
+                ind_unc_times);
+                
+  // Integration by parts
+
+  // Log-survival function
+  lsurv = -const_term_cum_haz(times,
+                             x,
+                             u[1:N,1],
+                             u[1:N,2],
+                             u_3,
+                             gamma,
+                             beta_21,
+                             lambda,
+                             rho_s);
+
+  for (i in 1:N) {
+    real integral = integrate_1d(integrand_bp,
+                                 0.0,
+                                 times[i],
+                                 {rho_s, gamma[3], u[i,2]},
+                                 x_r,
+                                 x_i,
+                                 1e-8);
+    lsurv[i] *= (1/rho_s)*(times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+                gamma[3]*u[i,2]);
+  }
+
+  // // Integration by parts with log
+  // 
+  // // Log-survival function
+  // lsurv = lconst_term_cum_haz(times,
+  //                             x,
+  //                             u[1:N,1],
+  //                             u[1:N,2],
+  //                             u_3,
+  //                             gamma,
+  //                             beta_21,
+  //                             lambda,
+  //                             rho_s);
+  // 
+  // for (i in 1:N) {
+  //   real integral = integrate_1d(integrand_bp,
+  //                                0.0,
+  //                                times[i],
+  //                                {rho_s, gamma[3], u[i,2]},
+  //                                x_r,
+  //                                x_i,
+  //                                0.01);
+  //   lsurv[i] += -log(rho_s) +
+  //               log((times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //               gamma[3]*u[i,2]*integral));
+  //   lsurv[i] = -exp(lsurv[i]);
+  // }
+
+  // Integration using incomplete gamma approximation
+  // for (i in 1:N) {
+  //   if (!is_nan(low_inc_gamma(rho_s, -gamma[3]*u[i,2]*times[i], 0.01))){
+  //     lsurv[i] *= (-gamma[3]*u[i,2])^(-rho_s)*
+  //                 low_inc_gamma(rho_s, -gamma[3]*u[i,2]*times[i], 0.01);
+  //   }
+  //   else {
+  //     real integral = integrate_1d(integrand_bp,
+  //                                  0.0,
+  //                                  times[i],
+  //                                  {rho_s, gamma[3], u[i,2]},
+  //                                  x_r,
+  //                                  x_i,
+  //                                  0.01);
+  //     lsurv[i] *= (1/rho_s)*
+  //                 (times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //                 gamma[3]*u[i,2]*integral);
+  //   }
+  // }
+
+  // Direct integral
+  // for (i in 1:N) {
+  //   real integral = integrate_1d(integrand,
+  //                                0.0,
+  //                                times[i],
+  //                                {rho_s, gamma[3], u[i,2]},
+  //                                x_r,
+  //                                x_i,
+  //                                0.01);
+  //   lsurv[i] = lsurv[i]*integral;
+  // }
+  
+  // // Laplace Approximation
+  // for (i in 1:N) {
+  //   if (rho_s &gt; 1){
+  //     lsurv[i] *= lap_app(0, times[i], rho_s, gamma[3], u[i,2]);
+  //   }
+  //   else {
+  //     real integral = integrate_1d(integrand_bp,
+  //                                  0.0,
+  //                                  times[i],
+  //                                  {rho_s, gamma[3], u[i,2]},
+  //                                  x_r,
+  //                                  x_i,
+  //                                  0.01);
+  //     lsurv[i] *= (1/rho_s)*
+  //                 (times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //                 gamma[3]*u[i,2]*integral);
+  //   }
+  // }
+   
+  // Survival log-likelihood
+  target += sum(lhaz) + sum(lsurv);
+   
+   
+  // ------------------------------------------------------
+  //          PRIOR DISTRIBUTIONS
+  // ------------------------------------------------------
+
+  // Survival fixed effects
+  target += normal_lpdf(beta_21 | 1, 5);
+
+  // Weibull scale parameter
+  target += gamma_lpdf(lambda | 1, 1);
+
+  // Weibull shape parameter
+  target += gamma_lpdf(rho_s | 2, 1);
+
+  // Association parameters
+  target += normal_lpdf(gamma | 0, 10);
+
+  // Random effects
+  for(i in 1:N){
+    target += multi_normal_lpdf(u[i,1:2] | rep_vector(0.0,2), sigma);
+    target += normal_lpdf(u_3[i] | 0, var_u3);
+  }
+
+  // Random effects variance
+  target += inv_gamma_lpdf(var_u | 0.01, 0.01);
+  target += inv_gamma_lpdf(var_u3 | 0.01, 0.01);
+
+  // Random effects correlation
+  target += beta_lpdf((rho+1)/2 | 2, 1);
+}
+</code></pre>
 </div>
 <div id="results" class="section level1">
 <h1>Results</h1>
-<pre class="r"><code>setwd(&quot;C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan&quot;)
+<p>Longitudinal model:</p>
+<pre class="r"><code>setwd(paste(&quot;C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/&quot;,
+            &quot;joint-models-in-stan&quot;, sep = &quot;&quot;))
 
-X1 &lt;- as.matrix(X,ncol=1)
-y &lt;- long_data$y
-n &lt;- nrow(X1)
-N &lt;- length(y)
-ID &lt;- as.numeric(long_data$id)
-obs_times &lt;- long_data$obs_times
+# Required quantities for longitudinal model fitting
 
-model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)</code></pre>
-<pre><code>## Warning in readLines(stan_file): linha final incompleta encontrada em
-## &#39;code/long_model.stan&#39;</code></pre>
-<pre class="r"><code>mle &lt;- model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))</code></pre>
-<pre><code>## Initial log joint probability = -8683.99 
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##       99      -1740.53     0.0277011       261.192      0.4026      0.4026      116    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      199      -1706.97     0.0188694       10.6703           1           1      227    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      299      -1705.72    0.00353893        16.575     0.08187           1      341    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      399      -1705.49    0.00465272       1.89892           1           1      458    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      499      -1705.47   0.000350149       0.40953           1           1      580    
-##     Iter      log prob        ||dx||      ||grad||       alpha      alpha0  # evals  Notes  
-##      510      -1705.47   0.000223314      0.169205           1           1      592    
-## Optimization terminated normally:  
-##   Convergence detected: relative gradient magnitude is below tolerance 
-## Finished in  0.4 seconds.</code></pre>
-<pre class="r"><code>posterior_samples &lt;- model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)</code></pre>
+x &lt;- as.matrix(data$survival[,2],1) # unique x
+N &lt;- size(x)[1]                     # total number of observations
+y &lt;- data$longitudinal[,2]          # longitudinal outcomes
+n_obs &lt;- length(y)                  # total number of longitudinal outcomes
+id &lt;- data$longitudinal[,1]         # patient IDs
+obs_times &lt;- data$longitudinal[,4]  # visit times for repeated observations
+
+long_data = list(y=y,
+                 N=N,
+                 n_obs=n_obs,
+                 x=x,
+                 id=id,
+                 obs_times=obs_times)
+
+long_model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)
+
+long_posterior_samples &lt;- long_model$sample(data = long_data, chains = 1)</code></pre>
 <pre><code>## Running MCMC with 1 chain...
 ## 
 ## Chain 1 Iteration:    1 / 2000 [  0%]  (Warmup)</code></pre>
 <pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
-<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: Sigma is not positive definite. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpCiHh69/model-2dcc7034dc1.stan&#39;, line 36, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: sigma is not positive definite. (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmp2HwGFN/model-151c28a81b38.stan&#39;, line 49, column 2 to column 22)</code></pre>
 <pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
 <pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
 <pre><code>## Chain 1</code></pre>
 <pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
-<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: Sigma is not positive definite. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpCiHh69/model-2dcc7034dc1.stan&#39;, line 36, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: sigma is not positive definite. (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmp2HwGFN/model-151c28a81b38.stan&#39;, line 49, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: sigma is not symmetric. sigma[1,2] = inf, but sigma[2,1] = inf (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmp2HwGFN/model-151c28a81b38.stan&#39;, line 49, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: long_model_model_namespace::log_prob: sigma is not symmetric. sigma[1,2] = inf, but sigma[2,1] = inf (in &#39;C:/Users/ezequ/AppData/Local/Temp/Rtmp2HwGFN/model-151c28a81b38.stan&#39;, line 49, column 2 to column 22)</code></pre>
 <pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
 <pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
 <pre><code>## Chain 1</code></pre>
@@ -794,42 +1225,163 @@ model &lt;- cmdstan_model(&quot;code/long_model.stan&quot;)</code></pre>
 ## Chain 1 Iteration: 1800 / 2000 [ 90%]  (Sampling) 
 ## Chain 1 Iteration: 1900 / 2000 [ 95%]  (Sampling) 
 ## Chain 1 Iteration: 2000 / 2000 [100%]  (Sampling) 
-## Chain 1 finished in 106.7 seconds.</code></pre>
-<pre class="r"><code>mle$summary()</code></pre>
-<pre><code>## # A tibble: 512 × 2
-##    variable     estimate
-##    &lt;chr&gt;           &lt;num&gt;
-##  1 lp__       -1705.    
-##  2 beta_1[1]      0.0722
-##  3 beta_1[2]      0.941 
-##  4 beta_1[3]      1.12  
-##  5 sigma_z        0.440 
-##  6 sigma_U[1]     0.646 
-##  7 sigma_U[2]     0.891 
-##  8 rho            0.439 
-##  9 U[1,1]        -0.0153
-## 10 U[2,1]         0.740 
-## # ℹ 502 more rows</code></pre>
-<pre class="r"><code>posterior_samples$summary()</code></pre>
-<pre><code>## Warning: The ESS has been capped to avoid unstable estimates.
+## Chain 1 finished in 6.5 seconds.</code></pre>
+<pre class="r"><code>long_posterior_samples$summary()</code></pre>
+<pre><code>## # A tibble: 212 × 10
+##    variable      mean   median      sd     mad        q5      q95  rhat ess_bulk
+##    &lt;chr&gt;        &lt;num&gt;    &lt;num&gt;   &lt;num&gt;   &lt;num&gt;     &lt;num&gt;    &lt;num&gt; &lt;num&gt;    &lt;num&gt;
+##  1 lp__      -373.    -373.    19.1    19.6    -404.     -3.41e+2 1.00      130.
+##  2 beta_1[1]   -0.134   -0.134  0.0838  0.0845   -0.267   9.66e-4 1.01      289.
+##  3 beta_1[2]    0.865    0.859  0.122   0.125     0.675   1.07e+0 1.00      358.
+##  4 beta_1[3]    0.995    0.998  0.0761  0.0707    0.868   1.11e+0 1.00      299.
+##  5 var_z        0.208    0.204  0.0306  0.0284    0.163   2.63e-1 1.00      535.
+##  6 var_u[1]     0.546    0.536  0.103   0.105     0.388   7.20e-1 1.00      649.
+##  7 var_u[2]     0.394    0.373  0.131   0.121     0.218   6.41e-1 1.01      158.
+##  8 rho          0.394    0.406  0.178   0.185     0.102   6.66e-1 0.999     187.
+##  9 u[1,1]      -0.456   -0.454  0.413   0.417    -1.13    2.44e-1 1.01     1142.
+## 10 u[2,1]       0.462    0.454  0.304   0.308    -0.0353  9.59e-1 1.00      868.
+## # ℹ 202 more rows
+## # ℹ 1 more variable: ess_tail &lt;num&gt;</code></pre>
+<p>Event-time model:</p>
+<pre class="r"><code>setwd(paste(&quot;C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/&quot;,
+            &quot;joint-models-in-stan&quot;, sep = &quot;&quot;))
 
-## Warning: The ESS has been capped to avoid unstable estimates.
+# Required quantities for event-time model fitting
 
-## Warning: The ESS has been capped to avoid unstable estimates.</code></pre>
-<pre><code>## # A tibble: 512 × 10
+x &lt;- as.matrix(data$survival[,2],1)  # unique x
+N &lt;- size(x)[1]                      # total number of observations
+status &lt;- data$survival[,4]          # vital status (1 = dead, 0 = alive)
+times &lt;- data$survival[,3]           # times to event
+ind_unc_times &lt;- which(status==1)    # uncensored times indicator
+n_unc_times &lt;- length(ind_unc_times) # number of uncensored times
+
+event_data &lt;- list(N=N,
+                   x=x,
+                   times=times,
+                   ind_unc_times=ind_unc_times,
+                   n_unc_times=n_unc_times)
+
+event_model &lt;- cmdstan_model(&quot;code/event_model.stan&quot;)</code></pre>
+<pre><code>## Warning in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 69, column 20: Use
+##     of normal_cdf without a vertical bar (|) between the first two arguments
+##     of a CDF is deprecated and will be removed in Stan 2.33.0. This can be
+##     automatically changed using the canonicalize flag for stanc
+## Warning in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 70, column 16: Use
+##     of normal_cdf without a vertical bar (|) between the first two arguments
+##     of a CDF is deprecated and will be removed in Stan 2.33.0. This can be
+##     automatically changed using the canonicalize flag for stanc</code></pre>
+<pre><code>## In file included from stan/src/stan/model/model_header.hpp:11:
+## stan/src/stan/model/model_base_crtp.hpp:198: warning: &#39;void stan::model::model_base_crtp&lt;M&gt;::write_array(boost::random::ecuyer1988&amp;, std::vector&lt;double, std::allocator&lt;double&gt; &gt;&amp;, std::vector&lt;int&gt;&amp;, std::vector&lt;double, std::allocator&lt;double&gt; &gt;&amp;, bool, bool, std::ostream*) const [with M = event_model_model_namespace::event_model_model; boost::random::ecuyer1988 = boost::random::additive_combine_engine&lt;boost::random::linear_congruential_engine&lt;unsigned int, 40014, 0, 2147483563&gt;, boost::random::linear_congruential_engine&lt;unsigned int, 40692, 0, 2147483399&gt; &gt;; std::ostream = std::basic_ostream&lt;char&gt;]&#39; was hidden [-Woverloaded-virtual=]
+##   198 |   void write_array(boost::ecuyer1988&amp; rng, std::vector&lt;double&gt;&amp; theta,
+##       |</code></pre>
+<pre><code>## C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.hpp:1475: note:   by &#39;event_model_model_namespace::event_model_model::write_array&#39;
+##  1475 |   write_array(RNG&amp; base_rng, std::vector&lt;double&gt;&amp; params_r, std::vector&lt;int&gt;&amp;
+##       | 
+## stan/src/stan/model/model_base_crtp.hpp:136: warning: &#39;void stan::model::model_base_crtp&lt;M&gt;::write_array(boost::random::ecuyer1988&amp;, Eigen::VectorXd&amp;, Eigen::VectorXd&amp;, bool, bool, std::ostream*) const [with M = event_model_model_namespace::event_model_model; boost::random::ecuyer1988 = boost::random::additive_combine_engine&lt;boost::random::linear_congruential_engine&lt;unsigned int, 40014, 0, 2147483563&gt;, boost::random::linear_congruential_engine&lt;unsigned int, 40692, 0, 2147483399&gt; &gt;; Eigen::VectorXd = Eigen::Matrix&lt;double, -1, 1&gt;; std::ostream = std::basic_ostream&lt;char&gt;]&#39; was hidden [-Woverloaded-virtual=]
+##   136 |   void write_array(boost::ecuyer1988&amp; rng, Eigen::VectorXd&amp; theta,
+##       | 
+## C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.hpp:1475: note:   by &#39;event_model_model_namespace::event_model_model::write_array&#39;
+##  1475 |   write_array(RNG&amp; base_rng, std::vector&lt;double&gt;&amp; params_r, std::vector&lt;int&gt;&amp;
+##       |</code></pre>
+<pre class="r"><code>event_posterior_samples &lt;- event_model$sample(data = event_data, chains = 1)</code></pre>
+<pre><code>## Running MCMC with 1 chain...</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Iteration:    1 / 2000 [  0%]  (Warmup)</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got inf. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: event_model_model_namespace::log_prob: sigma is not positive definite. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 251, column 2 to column 22)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got nan. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:</code></pre>
+<pre><code>## Chain 1 Exception: Error in function tanh_sinh&lt;double&gt;::integrate: The tanh_sinh quadrature evaluated your function at a singular point and got inf. Please narrow the bounds of integration or check your function for singularities. (in &#39;C:/Users/ezequ/AppData/Local/Temp/RtmpIVLSTc/model-29487313262b.stan&#39;, line 295, column 4 to line 301, column 39)</code></pre>
+<pre><code>## Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,</code></pre>
+<pre><code>## Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.</code></pre>
+<pre><code>## Chain 1</code></pre>
+<pre><code>## Chain 1 Iteration:  100 / 2000 [  5%]  (Warmup) 
+## Chain 1 Iteration:  200 / 2000 [ 10%]  (Warmup) 
+## Chain 1 Iteration:  300 / 2000 [ 15%]  (Warmup) 
+## Chain 1 Iteration:  400 / 2000 [ 20%]  (Warmup) 
+## Chain 1 Iteration:  500 / 2000 [ 25%]  (Warmup) 
+## Chain 1 Iteration:  600 / 2000 [ 30%]  (Warmup) 
+## Chain 1 Iteration:  700 / 2000 [ 35%]  (Warmup) 
+## Chain 1 Iteration:  800 / 2000 [ 40%]  (Warmup) 
+## Chain 1 Iteration:  900 / 2000 [ 45%]  (Warmup) 
+## Chain 1 Iteration: 1000 / 2000 [ 50%]  (Warmup) 
+## Chain 1 Iteration: 1001 / 2000 [ 50%]  (Sampling) 
+## Chain 1 Iteration: 1100 / 2000 [ 55%]  (Sampling) 
+## Chain 1 Iteration: 1200 / 2000 [ 60%]  (Sampling) 
+## Chain 1 Iteration: 1300 / 2000 [ 65%]  (Sampling) 
+## Chain 1 Iteration: 1400 / 2000 [ 70%]  (Sampling) 
+## Chain 1 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
+## Chain 1 Iteration: 1600 / 2000 [ 80%]  (Sampling) 
+## Chain 1 Iteration: 1700 / 2000 [ 85%]  (Sampling) 
+## Chain 1 Iteration: 1800 / 2000 [ 90%]  (Sampling) 
+## Chain 1 Iteration: 1900 / 2000 [ 95%]  (Sampling) 
+## Chain 1 Iteration: 2000 / 2000 [100%]  (Sampling) 
+## Chain 1 finished in 296.7 seconds.</code></pre>
+<pre><code>## Warning: 8 of 1000 (1.0%) transitions ended with a divergence.
+## See https://mc-stan.org/misc/warnings for details.</code></pre>
+<pre><code>## Warning: 1 of 1 chains had an E-BFMI less than 0.2.
+## See https://mc-stan.org/misc/warnings for details.</code></pre>
+<pre class="r"><code>event_posterior_samples$summary()</code></pre>
+<pre><code>## # A tibble: 315 × 10
 ##    variable       mean   median      sd     mad       q5      q95  rhat ess_bulk
 ##    &lt;chr&gt;         &lt;num&gt;    &lt;num&gt;   &lt;num&gt;   &lt;num&gt;    &lt;num&gt;    &lt;num&gt; &lt;num&gt;    &lt;num&gt;
-##  1 lp__       -2.00e+3 -2.00e+3 1.86e+1 1.87e+1 -2.03e+3 -1.97e+3 1.00     314. 
-##  2 beta_1[1]   6.79e-2  6.57e-2 4.86e-2 4.77e-2 -7.77e-3  1.50e-1 1.00     346. 
-##  3 beta_1[2]   9.25e-1  9.25e-1 6.14e-2 6.28e-2  8.21e-1  1.03e+0 1.01      61.4
-##  4 beta_1[3]   1.12e+0  1.12e+0 4.95e-2 5.06e-2  1.04e+0  1.20e+0 1.00     444. 
-##  5 sigma_z     4.99e-1  4.99e-1 9.26e-3 9.11e-3  4.84e-1  5.15e-1 1.00    1187. 
-##  6 sigma_U[1]  7.21e-1  7.22e-1 3.73e-2 3.59e-2  6.58e-1  7.83e-1 0.999   1158. 
-##  7 sigma_U[2]  9.38e-1  9.35e-1 4.49e-2 4.61e-2  8.65e-1  1.01e+0 1.00    1277. 
-##  8 rho         3.01e-1  3.04e-1 6.73e-2 6.91e-2  1.90e-1  4.07e-1 1.01     967. 
-##  9 U[1,1]     -1.85e-3 -6.29e-3 2.66e-1 2.61e-1 -4.43e-1  4.47e-1 1.00    1291. 
-## 10 U[2,1]      7.65e-1  7.57e-1 2.90e-1 2.89e-1  3.00e-1  1.26e+0 0.999   1378. 
-## # ℹ 502 more rows
+##  1 lp__        4.62e+6  4.61e+6 1.04e+6 1.25e+6  2.96e+6  6.32e+6  2.12     1.30
+##  2 beta_21     3.92e+0  3.93e+0 6.92e-2 8.16e-2  3.80e+0  4.02e+0  2.12     1.30
+##  3 gamma[1]   -7.03e-1 -7.03e-1 1.18e-5 1.19e-5 -7.03e-1 -7.03e-1  2.15     1.30
+##  4 gamma[2]    9.12e-1  9.12e-1 5.60e-5 6.75e-5  9.12e-1  9.12e-1  2.13     1.30
+##  5 gamma[3]    9.81e-1  9.81e-1 4.17e-5 4.60e-5  9.81e-1  9.81e-1  2.13     1.30
+##  6 lambda      1.15e+0  1.15e+0 3.09e-5 2.97e-5  1.15e+0  1.15e+0  2.19     1.28
+##  7 rho_s       1.61e+0  1.61e+0 7.74e-6 1.48e-5  1.61e+0  1.61e+0  2.56     1.20
+##  8 var_u[1]    1.22e+0  1.22e+0 4.99e-6 0        1.22e+0  1.22e+0  4.08     1.07
+##  9 var_u[2]    1.61e+0  1.61e+0 6.17e-6 1.48e-5  1.61e+0  1.61e+0  2.41     1.23
+## 10 rho         6.32e-2  6.32e-2 6.57e-7 8.90e-7  6.32e-2  6.32e-2  1.04    13.3 
+## # ℹ 305 more rows
 ## # ℹ 1 more variable: ess_tail &lt;num&gt;</code></pre>
 <p>Codes based on:</p>
 <ul>

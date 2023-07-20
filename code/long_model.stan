@@ -1,76 +1,91 @@
 functions{
-  // ------------------------------------------------------
-  //     LINEAR PREDICTOR FOR THE LONGITUDINAL SUBMODEL                
-  // ------------------------------------------------------ 
-    vector linear_predictor(matrix X, vector obs_times, int[] ID, vector beta_1, matrix U){
-      int N = num_elements(obs_times);
-      vector[N] out;
-      
-      out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*X[ID,1] + U[ID,1] + rows_dot_product(U[ID,2],obs_times);
-      
-      return out;
-    } 
-  // ------------------------------------------------------ 
+  /**
+  * Return a vector corresponding to linear predictor for longitudinal
+  * sub-model.
+  *
+  * @param x Matrix of covariates
+  * @param obs_times Vector of observed times
+  * @param id Vector of integer values corrensponding to identifiers for each
+           subject
+  * @param beta_1 Vector corresponding to fixed effects
+  * @param u Vector corresponding random effects.
+  * @return Linear predictor vector.
+  */
+  vector linear_predictor(matrix x, 
+                          vector obs_times, 
+                          array[] int id, 
+                          vector beta_1, 
+                          matrix u){
+    int N = num_elements(obs_times);
+    vector[N] out;
+    
+    out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*x[id,1] + u[id,1] + 
+          rows_dot_product(u[id,2],obs_times);
+    
+    return out;
+  } 
 }
 
 
 data{
+  int n_obs;
   int N;
-  int n;
-  vector[N] y;
-  matrix[n,1] X1;
-  int<lower=1,upper=n> ID[N];
-  vector[N] obs_times;
+  vector[n_obs] y;
+  matrix[N,1] x;
+  array[n_obs] int<lower=1,upper=N> id;
+  vector[n_obs] obs_times;
 }
 
 
 parameters{
   vector[3] beta_1;
-  real<lower=0> sigma_z;
-  real<lower=0> sigma_U[2];
+  real<lower=0> var_z;
+  array[2] real<lower=0> var_u;
   real<lower=-1, upper=1> rho;
-  matrix[n,2] U;
+  matrix[N,2] u;
 }
 
 transformed parameters{
-  cov_matrix[2] Sigma;
+  cov_matrix[2] sigma;
 
-  Sigma[1,1] = sigma_U[1]^2;
-  Sigma[2,2] = sigma_U[2]^2;
-  Sigma[1,2] = sigma_U[1]*sigma_U[2]*rho;
-  Sigma[2,1] = Sigma[1,2];
+  sigma[1,1] = var_u[1];
+  sigma[2,2] = var_u[2];
+  sigma[1,2] = sqrt(var_u[1]*var_u[2])*rho;
+  sigma[2,1] = sigma[1,2];
 }
 
 
 model{
   // ------------------------------------------------------
-    //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
+  //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
   // ------------------------------------------------------
-    {
-      vector[N] linpred; 
-      
-      // Linear predictor
-      linpred = linear_predictor(X1, obs_times, ID, beta_1, U);
-      
-      // Longitudinal Normal log-likelihood
-      target += normal_lpdf(y | linpred, sigma_z);
-    }  
+  
+  vector[n_obs] linpred; 
+
+  // Linear predictor
+  linpred = linear_predictor(x, obs_times, id, beta_1, u);
+
+  // Longitudinal Normal log-likelihood
+  target += normal_lpdf(y | linpred, sqrt(var_z));
 
   // ------------------------------------------------------
-    //                       LOG-PRIORS                       
+  //                       LOG-PRIORS                       
   // ------------------------------------------------------
-    // Longitudinal fixed effects
+    
+  // Longitudinal fixed effects
   target += normal_lpdf(beta_1 | 0, 100);
   
-  // Random-effects
-   for(i in 1:n){ target += multi_normal_lpdf(U[i,1:2] | rep_vector(0.0,2), Sigma); }
+  // Random effects
+  for(i in 1:N){ 
+    target += multi_normal_lpdf(u[i,1:2] | rep_vector(0.0,2), sigma);
+  }
 
-   // Random-effects variance
-   target += inv_gamma_lpdf(sigma_U | 0.01, 0.01);
+  // Random effects variance
+  target += inv_gamma_lpdf(var_u | 0.01, 0.01);
 
-   // Random-effects correlation
-   target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
+  // Random effects correlation
+  target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
   
   // Residual error variance
-  target += inv_gamma_lpdf(sigma_z | 0.01, 0.01);   
+  target += inv_gamma_lpdf(var_z | 0.01, 0.01);
 }

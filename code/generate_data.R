@@ -2,29 +2,37 @@ library("MASS")
 library("cmdstanr")
 library("pracma")
 
-setwd("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan")
+setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
+            "joint-models-in-stan", sep = ""))
 
 set.seed(123)
 
 #########################################################################
 # Joint model simulation
 #########################################################################
-# m   : sample size
+# N: sample size
 # lambda > 0: scale for Weibull baseline hazard 
-# rho > 0: shape for Weibull baseline hazard
+# rho_s > 0: shape for Weibull baseline hazard
 # cens_time: censored time
 # beta: vector of covariates
 # gamma: vector of association coefficients
-# sigma_U: vector with variances of U1, U2 and U3
-# sigma_z: standard deviation of measurement errors 
-# rho: correlation between U1 and U2
-# n_rep_obs: number of repeated observations for each individual
+# var_u: vector with random effects variances
+# var_z: measurement errors variance
+# rho: correlation between u_1 and u_2
+# n_rep_obs: number of repeated observations for each subject
 
-
-
-simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs){
+sim_data <- function(N, 
+                     lambda, 
+                     rho_s, 
+                     cens_time, 
+                     beta, 
+                     gamma, 
+                     var_u, 
+                     var_z, 
+                     rho, 
+                     n_rep_obs){
   
-  times <- ID <- longit.out <- X_total <- vector()
+  times <- id <- long_out <- x_total <- vector()
   
   beta_11 <- beta[1]
   beta_12 <- beta[2]
@@ -35,20 +43,20 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   gamma_2 <- gamma[2]
   gamma_3 <- gamma[3]
   
-  mu_U1 <- 0
-  mu_U2 <- 0
-  mu_U <- c(mu_U1,mu_U2)
-  sigma_U1 <- sigma_U[1]
-  sigma_U2 <- sigma_U[2]
-  sigma_U3 <- sigma_U[3]
-  sigma_U <- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
-                    2)
-  bvnU <- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
-  U1 <- bvnU[,1]
-  U2 <- bvnU[,2]
-  U3 <- rnorm(m, 0, sigma_U3)
+  mu_u1 <- 0
+  mu_u2 <- 0
+  mu_u <- c(mu_u1,mu_u2)
+  var_u1 <- var_u[1]
+  var_u2 <- var_u[2]
+  var_u3 <- var_u[3]
+  sigma <- matrix(c(var_u1, sqrt(var_u1*var_u2)*rho, 
+                    sqrt(var_u1*var_u2)*rho, var_u2), 2)
+  bvn_u <- mvrnorm(N, mu = mu_u, Sigma = sigma)
+  u_1 <- bvn_u[,1]
+  u_2 <- bvn_u[,2]
+  u_3 <- rnorm(N, 0, var_u3)
   
-  X <- rnorm(m, 0, 1)
+  x <- rnorm(N, 0, 1)
   
   ###################
   # Survival process
@@ -56,18 +64,22 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   
   # Simulating the times to event
 
-  V <- runif(n=m)
-  id_times <- c(1:m)
+  v <- runif(n=N)
+  id_times <- c(1:N)
   
-  for(i in 1:m){
-    h <- Vectorize(function(s) lambda*rho_s*s^(rho_s-1)*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+  for(i in 1:N){
+    haz <- Vectorize(function(s) {
+      lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+      gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+    })
     
-    H <- Vectorize(function(t) integrate(h, 0, t)$value)
-    
-    Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
-    
-    times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+    cum_haz <- Vectorize(function(t) integrate(haz, 0, t)$value)
+
+    sv <- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
+
+    times[i] <- optim(1e-6, sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
   }
+  
   status <- as.vector(times < cens_time)
   times <- as.vector(ifelse(status, times, cens_time))
   status <- as.numeric(status) # Censoring indicators (1=Observed, 0=Censored)
@@ -76,94 +88,102 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   # Longitudinal process  
   ##############################
   
-  obs_times.out <- vector()
-  for(i in 1:m){
-    obs_times <- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+  obs_times_out <- vector()
+  for(i in 1:N){
+    # number of repeated observations for each individual
+    obs_times <- seq(0,times[i], by = n_rep_obs) 
     
-    X_t <- rep(X[i], length(obs_times))
+    x_t <- rep(x[i], length(obs_times))
 
-    X_total <- c(X_total,X_t)
-    Z = rnorm(length(obs_times), 0, sigma_z)
-    yt <- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+    x_total <- c(x_total,x_t)
+    z = rnorm(length(obs_times), 0, sqrt(var_z))
+    y_t <- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
+          rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
+          obs_times + z
 
-    longit.out <- c(longit.out,yt)
-    ID <- c(ID,rep(i,length(obs_times)))
-    obs_times.out <- c(obs_times.out,obs_times)
+    long_out <- c(long_out,y_t)
+    id <- c(id,rep(i,length(obs_times)))
+    obs_times_out <- c(obs_times_out,obs_times)
   }
   
   #---------------------------------------------------------------------
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
-  long.proc <- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc <- as.matrix(cbind(id_times, X, times, status)) # Survival process
-  obj <- list(long.proc,surv.proc, obs_times.out)
-  names(obj) <- c("longitudinal","survival", "obs_times")
+  long_proc <- as.matrix(cbind(id, long_out, x_total, obs_times_out)) 
+  surv_proc <- as.matrix(cbind(id_times, x, times, status)) 
+  data <- list(long_proc, surv_proc)
+  names(data) <- c("longitudinal","survival")
   
-  return(obj)
+  return(data)
 }
 
-
-m<- 250
-lambda <- 0.01
-rho_s <- 1
-cens_time <- 10
+N<- 500
+lambda <- 1
+rho_s <- 2
+cens_time <- 3
 beta <- c(0,1,1,1)
-gamma <- c(-1.5,0,0)
-sigma_U <- c(0.5^0.5,1,0.25^0.5)
-sigma_z <- 0.25^0.5
-rho <- 0.3
+gamma <- c(0,0,0)
+var_u <- c(0.5,0.5,05)
+var_z <- 0.25
+rho <- 0.5
 n_rep_obs <- 0.5
 
-obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)
+data <- sim_data(N, 
+                 lambda, 
+                 rho_s, 
+                 cens_time, 
+                 beta, 
+                 gamma, 
+                 var_u, 
+                 var_z, 
+                 rho, 
+                 n_rep_obs)
 
 
-# Required quantities for model fitting
-X <- obj$survival[,2]                         # unique X    
-X_total <- obj$longitudinal[,3]    # X with repeated observations
-n <- size(X)[2]                    # total number of observations
-y <- obj$longitudinal[,2]          # longitudinal outcomes
-ID <- obj$longitudinal[,1]         # patient IDs
-nid <- length(unique(ID))          # number of patients
-id_times <- obj$survival[,1]       # unique ids
-status <- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
-times <- obj$survival[,3]          # times to event
-obs_times <- obj$obs_times         # visit times for repeated observations
-N <- length(y)                     # total number of longitudinal outcomes
-indobs <- which(status==1)         # observed survival times indicator
-nobs <- length(indobs)             # number of observed survival times
+# Required quantities for longitudinal model fitting
 
-long_data <- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
+x <- as.matrix(data$survival[,2],1) # unique x
+N <- size(x)[1]                     # total number of observations
+y <- data$longitudinal[,2]          # longitudinal outcomes
+n_obs <- length(y)                  # total number of longitudinal outcomes
+id <- data$longitudinal[,1]         # patient IDs
+obs_times <- data$longitudinal[,4]  # visit times for repeated observations
 
-
-time_data <- data.frame(id=id_times,
-                        times=times,
-                        status=status,
-                        X=X)
-
-
-
-X1 <- as.matrix(X,ncol=1)
-y <- long_data$y
-n <- nrow(X1)
-N <- length(y)
-ID <- as.numeric(long_data$id)
-obs_times <- long_data$obs_times
-
-
-
+long_data = list(y=y,
+                 N=N,
+                 n_obs=n_obs,
+                 x=x,
+                 id=id,
+                 obs_times=obs_times)
+             
 long_model <- cmdstan_model("code/long_model.stan")
-event_model <- cmdstan_model("code/event_model.stan")
 
-long_mle <- long_model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
-long_posterior_samples <- long_model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
+long_mle <- long_model$optimize(data = long_data)
+long_posterior_samples <- long_model$sample(data = long_data, chains = 1)
 
 long_mle$summary()
 long_posterior_samples$summary()
 
+# Required quantities for event-time model fitting
 
-event_mle <- event_model$optimize(data = list(n=n, nobs=nobs, X=X1, times=times, indobs=indobs))
-event_posterior_samples <- event_model$sample(data = list(n=n, nobs=nobs, X=X1, times=times, indobs=indobs), chains = 1)
+x <- as.matrix(data$survival[,2],1)  # unique x
+N <- size(x)[1]                      # total number of observations
+status <- data$survival[,4]          # vital status (1 = dead, 0 = alive)
+times <- data$survival[,3]           # times to event
+ind_unc_times <- which(status==1)    # uncensored times indicator
+n_unc_times <- length(ind_unc_times) # number of uncensored times
+
+event_data <- list(N=N,
+                   x=x,
+                   times=times,
+                   ind_unc_times=ind_unc_times,
+                   n_unc_times=n_unc_times)
+
+
+event_model <- cmdstan_model("code/event_model.stan")
+
+event_mle <- event_model$optimize(data = event_data)
+event_posterior_samples <- event_model$sample(data = event_data, chains = 1)
 
 event_mle$summary()
 event_posterior_samples$summary()
-

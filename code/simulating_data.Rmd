@@ -10,7 +10,8 @@ The objective is to generate data for joint models. The longitudinal model is
 
 ```{=latex}
 \begin{align*}
-  Y_{ij} &= \beta_{11} + \beta_{12}t_{ij} + \beta_{13}X_i + U_{1i} + U_{2i}t_{ij} + Z_{ij},
+  Y_{ij} &= \beta_{11} + \beta_{12}t_{ij} + \beta_{13}X_i + U_{1i} + 
+  U_{2i}t_{ij} + Z_{ij},
   \\
   X_i &\sim N(0,1),
   \\
@@ -26,7 +27,8 @@ The model for event times is
 
 ```{=latex}
 \begin{align*}
-  h_i(t_i) &= h_{0i}(t_i) \exp\{\beta_{21}X_i + \gamma_1 U_{1i} + \gamma_2 U_{2i} + \gamma_3(U_{1i} + U_{2i}t_i) + U_{3i}\},
+  h_i(t_i) &= h_{0i}(t_i) \exp\{\beta_{21}X_i + \gamma_1 U_{1i} + 
+  \gamma_2 U_{2i} + \gamma_3(U_{1i} + U_{2i}t_i) + U_{3i}\},
   \\
   U_{3i} &\sim N(0, \sigma_3),
   \\
@@ -50,18 +52,16 @@ To generate the data we need to create $(U_1, U_2)$, $U_3$ and $X$:
 ```{r}
 set.seed(123)
 
-m<- 250
-lambda <- 0.01
-rho_s <- 1
-cens_time <- 4
+N<- 250
+lambda <- 1
+rho_s <- 2
+cens_time <- 6
 beta <- c(0,1,1,1)
-gamma <- c(-1.5,0,2)
-sigma_U <- c(0.5^0.5,1,0.25^0.5)
-sigma_z <- 0.25^0.5
-rho <- 0.3
+gamma <- c(-1,1,1)
+var_u <- c(1,1,1)
+var_z <- 0.25
+rho <- 0.5
 n_rep_obs <- 0.5
-
-
 
 beta_11 <- beta[1]
 beta_12 <- beta[2]
@@ -72,88 +72,108 @@ gamma_1 <- gamma[1]
 gamma_2 <- gamma[2]
 gamma_3 <- gamma[3]
 
-mu_U1 <- 0
-mu_U2 <- 0
-mu_U <- c(mu_U1,mu_U2)
-sigma_U1 <- sigma_U[1]
-sigma_U2 <- sigma_U[2]
-sigma_U3 <- sigma_U[3]
-sigma_U <- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
-                  2)
-bvnU <- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
-U1 <- bvnU[,1]
-U2 <- bvnU[,2]
-U3 <- rnorm(m, 0, sigma_U3)
+mu_u1 <- 0
+mu_u2 <- 0
+mu_u <- c(mu_u1,mu_u2)
+var_u1 <- var_u[1]
+var_u2 <- var_u[2]
+var_u3 <- var_u[3]
+sigma <- matrix(c(var_u1, sqrt(var_u1*var_u2)*rho, 
+                  sqrt(var_u1*var_u2)*rho, var_u2), 2)
+bvn_u <- mvrnorm(N, mu = mu_u, Sigma = sigma)
+u_1 <- bvn_u[,1]
+u_2 <- bvn_u[,2]
+u_3 <- rnorm(N, 0, var_u3)
 
-X <- rnorm(m, 0, 1)
+x <- rnorm(N, 0, 1)
 ```
 
 ## Time-to-event data
 
-For time-to-event data, we need to compute the survival probability $S_i(t) = \exp(-H_i(t))$, where $H_i(t) = \int_{0}^{t} h_i(s)ds$ is the cumulative hazard function. To generate $S_i(t)$, we can apply the procedure described in [this article](https://onlinelibrary.wiley.com/doi/abs/10.1002/sim.2059): we generate $V_i \sim U(0,1)$ and we take $t = S_i^{-1}(V_i)$. In R, we can create $H$ as a function of $t$ and find the root of $S_i(t) - V_i = \exp(-H_i(t)) - V_i = \exp(\int_{0}^{t} h_i(s)ds) - V_i$. We can try to integrate $h_i(s)$ using the integrate function and find the root using the uniroot function, but it doesn't work:
+For time-to-event data, we need to compute the survival probability 
+$S_i(t) = \exp(-H_i(t))$, where $H_i(t) = \int_{0}^{t} h_i(s)ds$ is the 
+cumulative hazard function. To generate $S_i(t)$, we can apply the procedure 
+described in 
+[this article](https://onlinelibrary.wiley.com/doi/abs/10.1002/sim.2059): we 
+generate $V_i \sim U(0,1)$ and we take $t = S_i^{-1}(V_i)$. In R, we can create 
+$H$ as a function of $t$ and find the root of 
+$S_i(t) - V_i = \exp(-H_i(t)) - V_i = \exp(\int_{0}^{t} h_i(s)ds) - V_i$. We 
+can try to integrate $h_i(s)$ using the integrate function and find the root 
+using the uniroot function, but it doesn't work:
 
 ```{r, error=TRUE}
-V <- runif(n=m)
+v <- runif(n=N)
 times <- vector()
 
-for(i in 1:m){
-  h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+for(i in 1:N){
+  haz <- Vectorize(function(s) {
+    lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+    gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+  })
   
-  H <- Vectorize(function(t) integrate(h, 0, t)$value)
+  cum_haz <- Vectorize(function(t) integrate(haz, 0, t)$value)
   
-  Sv <- Vectorize(function(t) exp(-H(t)) - V[i])
+  sv <- Vectorize(function(t) exp(-cum_haz(t)) - v[i])
   
-  times[i] <- uniroot(Sv, lower = 0, upper = 20, extendInt = "yes")$root
+  times[i] <- uniroot(sv, lower = 0, upper = 200)$root
 }
 ```
 
-An alternative is calculate the result of the integral and use the lower incomplete gamma function, but it needs $-gamma_3*U2[i]*u > 0$:
+An alternative is calculate the result of the integral and use the lower 
+incomplete gamma function, but it needs $-gamma_3*u_2[i]*u > 0$:
 
 ```{r, message=FALSE, warning=FALSE, error=TRUE}
-for(i in 1:m){
+for(i in 1:N){
   h_0_not_t <- lambda*rho_s
-  h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  h_not_t <- h_0_not_t*exp(beta_21*x[i] + gamma_1*u_1[i] + gamma_2*u_2[i] + 
+             gamma_3*(u_1[i]) + u_3[i])
   
-  ifelse(gamma_3*U2[i] == 0, 
-         H <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
-         H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  ifelse(gamma_3*u_2[i] == 0, 
+         cum_haz <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         cum_haz <- Vectorize(function(u) h_not_t*(-gamma_3*u_2[i])^(-rho_s)*
+                    pracma::gammainc(-gamma_3*u_2[i]*u, rho_s)[[1]]))
   
+  sv <- Vectorize(function(u) exp(-cum_haz(u)) - v[i])
   
-  Sv <- Vectorize(function(u) exp(-H(u)) - V[i])
-  
-  times[i] <- uniroot(Sv, lower = 0, upper = 200, extendInt = "yes")$root
+  times[i] <- uniroot(sv, lower = 0, upper = 200)$root
 }
 ```
 
-Replacing the uniroot function with the optim, the code work (the solution found minimizes the error of $|S_i - V_i|$ and may not be a root):
+Replacing the uniroot function with the optim, the code work (the solution 
+found minimizes the error of $|S_i - V_i|$ and may not be a root):
 
 ```{r, message=FALSE, warning=FALSE, error=TRUE}
-for(i in 1:m){
+for(i in 1:N){
   h_0_not_t <- lambda*rho_s
-  h_not_t <- h_0_not_t*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i]) + U3[i])
+  h_not_t <- h_0_not_t*exp(beta_21*x[i] + gamma_1*u_1[i] + gamma_2*u_2[i] + 
+             gamma_3*(u_1[i]) + u_3[i])
   
-  ifelse(gamma_3*U2[i] == 0, 
-         H <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
-         H <- Vectorize(function(u) h_not_t*(-gamma_3*U2[i])^(-rho_s)*pracma::gammainc(-gamma_3*U2[i]*u, rho_s)[[1]]))
+  ifelse(gamma_3*u_2[i] == 0, 
+         cum_haz <- Vectorize(function(u) h_not_t*u^rho_s/rho_s),
+         cum_haz <- Vectorize(function(u) h_not_t*(-gamma_3*u_2[i])^(-rho_s)*
+                    pracma::gammainc(-gamma_3*u_2[i]*u, rho_s)[[1]]))
   
+  sv <- Vectorize(function(u) abs(exp(-cum_haz(u)) - v[i]))
   
-  Sv <- Vectorize(function(u) abs(exp(-H(u)) - V[i]))
-  
-  times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+  times[i] <- optim(0, sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
 }
 ```
 
-However, the best solution found was to use the first code with the optim function:
+However, the best solution found was to use the first code with the optim 
+function:
 
 ```{r, error=TRUE}
-for(i in 1:m){
-  h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
+for(i in 1:N){
+  haz <- Vectorize(function(s) {
+    lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+    gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+  })
   
-  H <- Vectorize(function(t) integrate(h, 0, t)$value)
+  cum_haz <- Vectorize(function(t) integrate(haz, 0, t)$value)
   
-  Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
+  sv <- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
   
-  times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+  times[i] <- optim(0, sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
 }
 ```
 
@@ -162,20 +182,23 @@ for(i in 1:m){
 For the longitudinal data, we create repeated observations up to time $t_i$:
 
 ```{r}
-ID <- longit.out <- X_total <- obs_times.out <- vector()
+id <- long_out <- x_total <- obs_times_out <- vector()
 
-for(i in 1:m){
-  obs_times <- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+for(i in 1:N){
+  # number of repeated observations for each individual
+  obs_times <- seq(0,times[i], by = n_rep_obs) 
   
-  X_t <- rep(X[i], length(obs_times))
+  x_t <- rep(x[i], length(obs_times))
 
-  X_total <- c(X_total,X_t)
-  Z = rnorm(length(obs_times), 0, sigma_z)
-  yt <- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+  x_total <- c(x_total,x_t)
+  z = rnorm(length(obs_times), 0, var_z)
+  yt <- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
+    rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
+    obs_times + z
 
-  longit.out <- c(longit.out,yt)
-  ID <- c(ID,rep(i,length(obs_times)))
-  obs_times.out <- c(obs_times.out,obs_times)
+  long_out <- c(long_out,yt)
+  id <- c(id,rep(i,length(obs_times)))
+  obs_times_out <- c(obs_times_out,obs_times)
 }
 ```
 
@@ -185,25 +208,18 @@ for(i in 1:m){
 Generating data:
 
 ```{r}
-#########################################################################
-# Joint model simulation
-#########################################################################
-# m   : sample size
-# lambda > 0: scale for Weibull baseline hazard 
-# rho > 0: shape for Weibull baseline hazard
-# cens_time: censored time
-# beta: vector of covariates
-# gamma: vector of association coefficients
-# sigma_U: vector with variances of U1, U2 and U3
-# sigma_z: standard deviation of measurement errors 
-# rho: correlation between U1 and U2
-# n_rep_obs: number of repeated observations for each individual
-
-
-
-simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs){
+sim_data <- function(N, 
+                     lambda, 
+                     rho_s, 
+                     cens_time, 
+                     beta, 
+                     gamma, 
+                     var_u, 
+                     var_z, 
+                     rho, 
+                     n_rep_obs){
   
-  times <- ID <- longit.out <- X_total <- vector()
+  times <- id <- long_out <- x_total <- vector()
   
   beta_11 <- beta[1]
   beta_12 <- beta[2]
@@ -214,20 +230,20 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   gamma_2 <- gamma[2]
   gamma_3 <- gamma[3]
   
-  mu_U1 <- 0
-  mu_U2 <- 0
-  mu_U <- c(mu_U1,mu_U2)
-  sigma_U1 <- sigma_U[1]
-  sigma_U2 <- sigma_U[2]
-  sigma_U3 <- sigma_U[3]
-  sigma_U <- matrix(c(sigma_U1^2, sigma_U1*sigma_U2*rho, sigma_U1*sigma_U2*rho, sigma_U2^2),
-                    2)
-  bvnU <- mvrnorm(m, mu = mu_U, Sigma = sigma_U)
-  U1 <- bvnU[,1]
-  U2 <- bvnU[,2]
-  U3 <- rnorm(m, 0, sigma_U3)
+  mu_u1 <- 0
+  mu_u2 <- 0
+  mu_u <- c(mu_u1,mu_u2)
+  var_u1 <- var_u[1]
+  var_u2 <- var_u[2]
+  var_u3 <- var_u[3]
+  sigma <- matrix(c(var_u1, sqrt(var_u1*var_u2)*rho, 
+                    sqrt(var_u1*var_u2)*rho, var_u2), 2)
+  bvn_u <- mvrnorm(N, mu = mu_u, Sigma = sigma)
+  u_1 <- bvn_u[,1]
+  u_2 <- bvn_u[,2]
+  u_3 <- rnorm(N, 0, var_u3)
   
-  X <- rnorm(m, 0, 1)
+  x <- rnorm(N, 0, 1)
   
   ###################
   # Survival process
@@ -235,18 +251,22 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   
   # Simulating the times to event
 
-  v <- runif(n=m)
-  id_times <- c(1:m)
+  v <- runif(n=N)
+  id_times <- c(1:N)
   
-  for(i in 1:m){
-    h <- Vectorize(function(s) lambda*rho_s*s^{rho_s-1}*exp(beta_21*X[i] + gamma_1*U1[i] + gamma_2*U2[i] + gamma_3*(U1[i] + U2[i]*s) + U3[i]))
-  
-    H <- Vectorize(function(t) integrate(h, 0, t)$value)
-  
-    Sv <- Vectorize(function(t) abs(exp(-H(t)) - V[i]))
-  
-    times[i] <- optim(0, Sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+  for(i in 1:N){
+    haz <- Vectorize(function(s) {
+      lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
+      gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
+    })
+    
+    cum_haz <- Vectorize(function(t) integrate(haz, 0, t)$value)
+
+    sv <- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
+
+    times[i] <- optim(1e-6, sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
   }
+  
   status <- as.vector(times < cens_time)
   times <- as.vector(ifelse(status, times, cens_time))
   status <- as.numeric(status) # Censoring indicators (1=Observed, 0=Censored)
@@ -255,30 +275,33 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
   # Longitudinal process  
   ##############################
   
-  obs_times.out <- vector()
-  for(i in 1:m){
-    obs_times <- seq(0,times[i], by = n_rep_obs) # number of repeated observations for each individual
+  obs_times_out <- vector()
+  for(i in 1:N){
+    # number of repeated observations for each individual
+    obs_times <- seq(0,times[i], by = n_rep_obs) 
     
-    X_t <- rep(X[i], length(obs_times))
+    x_t <- rep(x[i], length(obs_times))
 
-    X_total <- c(X_total,X_t)
-    Z = rnorm(length(obs_times), 0, sigma_z)
-    yt <- beta_11 + beta_12*obs_times + beta_13*rep(X[i], length(obs_times)) + rep(U1[i], length(obs_times)) + rep(U2[i], length(obs_times))*obs_times + Z
+    x_total <- c(x_total,x_t)
+    z = rnorm(length(obs_times), 0, sqrt(var_z))
+    y_t <- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
+          rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
+          obs_times + z
 
-    longit.out <- c(longit.out,yt)
-    ID <- c(ID,rep(i,length(obs_times)))
-    obs_times.out <- c(obs_times.out,obs_times)
+    long_out <- c(long_out,y_t)
+    id <- c(id,rep(i,length(obs_times)))
+    obs_times_out <- c(obs_times_out,obs_times)
   }
   
   #---------------------------------------------------------------------
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
-  long.proc <- as.matrix(cbind(ID, longit.out, X_total)) # Longitudinal process
-  surv.proc <- as.matrix(cbind(id_times, X, times, status)) # Survival process
-  obj <- list(long.proc,surv.proc, obs_times.out)
-  names(obj) <- c("longitudinal","survival", "obs_times")
+  long_proc <- as.matrix(cbind(id, long_out, x_total, obs_times_out)) 
+  surv_proc <- as.matrix(cbind(id_times, x, times, status)) 
+  data <- list(long_proc, surv_proc)
+  names(data) <- c("longitudinal","survival")
   
-  return(obj)
+  return(data)
 }
 ```
 
@@ -286,149 +309,611 @@ simDataJ <- function(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z,
 Creating data:
 
 ```{r}
-m<- 250
-lambda <- 0.01
-rho_s <- 1
-cens_time <- 4
+N<- 100
+lambda <- 1
+rho_s <- 2
+cens_time <- 6
 beta <- c(0,1,1,1)
-gamma <- c(-1.5,0,2)
-sigma_U <- c(0.5^0.5,1,0.25^0.5)
-sigma_z <- 0.25^0.5
-rho <- 0.3
+gamma <- c(0,0,0)
+var_u <- c(0.5,0.5,0.5)
+var_z <- 0.25
+rho <- 0.5
 n_rep_obs <- 0.5
 
-obj <- simDataJ(m, lambda, rho_s, cens_time, beta, gamma, sigma_U, sigma_z, rho, n_rep_obs)
-
-
-# Required quantities for model fitting
-X <- obj$survival[,2]              # unique X    
-X_total <- obj$longitudinal[,3]    # X with repeated observations
-n <- nrow(X)                       # total number of observations
-y <- obj$longitudinal[,2]          # longitudinal outcomes
-ID <- obj$longitudinal[,1]         # patient IDs
-nid <- length(unique(ID))          # number of patients
-id_times <- obj$survival[,1]       # unique ids
-status <- obj$survival[,4]         # vital status (1 = dead, 0 = alive)
-times <- obj$survival[,3]          # times to event
-obs_times <- obj$obs_times         # visit times for repeated observations
-N <- length(y)                     # total number of longitudinal outcomes
-nobs <- length(id_times)           # number of observed survival times
-
-long_data <- data.frame(id = ID, y = y, obs_times = obs_times , X_total)
-
-
-time_data <- data.frame(id=id_times,
-                        times=times,
-                        status=status,
-                        X=X)
+data <- sim_data(N, 
+                 lambda, 
+                 rho_s, 
+                 cens_time, 
+                 beta, 
+                 gamma, 
+                 var_u, 
+                 var_z, 
+                 rho, 
+                 n_rep_obs)
 ```
 
 Stan model for longitudinal process:
 
 ```{stan output.var="long_model"}
 functions{
-  // ------------------------------------------------------
-  //     LINEAR PREDICTOR FOR THE LONGITUDINAL SUBMODEL                
-  // ------------------------------------------------------ 
-    vector linear_predictor(matrix X, vector obs_times, int[] ID, vector beta_1, matrix U){
-      int N = num_elements(obs_times);
-      vector[N] out;
-      
-      out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*X[ID,1] + U[ID,1] + rows_dot_product(U[ID,2],obs_times);
-      
-      return out;
-    } 
-  // ------------------------------------------------------ 
+  /**
+  * Return a vector corresponding to linear predictor for longitudinal
+  * sub-model.
+  *
+  * @param x Matrix of covariates
+  * @param obs_times Vector of observed times
+  * @param id Vector of integer values corrensponding to identifiers for each
+           subject
+  * @param beta_1 Vector corresponding to fixed effects
+  * @param u Vector corresponding random effects.
+  * @return Linear predictor vector.
+  */
+  vector linear_predictor(matrix x, 
+                          vector obs_times, 
+                          array[] int id, 
+                          vector beta_1, 
+                          matrix u){
+    int N = num_elements(obs_times);
+    vector[N] out;
+    
+    out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*x[id,1] + u[id,1] + 
+          rows_dot_product(u[id,2],obs_times);
+    
+    return out;
+  } 
 }
 
 
 data{
+  int n_obs;
   int N;
-  int n;
-  vector[N] y;
-  matrix[n,1] X1;
-  int<lower=1,upper=n> ID[N];
-  vector[N] obs_times;
+  vector[n_obs] y;
+  matrix[N,1] x;
+  array[n_obs] int<lower=1,upper=N> id;
+  vector[n_obs] obs_times;
 }
 
 
 parameters{
   vector[3] beta_1;
-  real<lower=0> sigma_z;
-  real<lower=0> sigma_U[2];
+  real<lower=0> var_z;
+  array[2] real<lower=0> var_u;
   real<lower=-1, upper=1> rho;
-  matrix[n,2] U;
+  matrix[N,2] u;
 }
 
 transformed parameters{
-  cov_matrix[2] Sigma;
+  cov_matrix[2] sigma;
 
-  Sigma[1,1] = sigma_U[1]^2;
-  Sigma[2,2] = sigma_U[2]^2;
-  Sigma[1,2] = sigma_U[1]*sigma_U[2]*rho;
-  Sigma[2,1] = Sigma[1,2];
+  sigma[1,1] = var_u[1];
+  sigma[2,2] = var_u[2];
+  sigma[1,2] = sqrt(var_u[1]*var_u[2])*rho;
+  sigma[2,1] = sigma[1,2];
 }
 
 
 model{
   // ------------------------------------------------------
-    //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
+  //        LOG-LIKELIHOOD FOR LONGITUDINAL SUBMODEL                
   // ------------------------------------------------------
-    {
-      vector[N] linpred; 
-      
-      // Linear predictor
-      linpred = linear_predictor(X1, obs_times, ID, beta_1, U);
-      
-      // Longitudinal Normal log-likelihood
-      target += normal_lpdf(y | linpred, sigma_z);
-    }  
+  
+  vector[n_obs] linpred; 
+
+  // Linear predictor
+  linpred = linear_predictor(x, obs_times, id, beta_1, u);
+
+  // Longitudinal Normal log-likelihood
+  target += normal_lpdf(y | linpred, sqrt(var_z));
 
   // ------------------------------------------------------
-    //                       LOG-PRIORS                       
+  //                       LOG-PRIORS                       
   // ------------------------------------------------------
-    // Longitudinal fixed effects
+    
+  // Longitudinal fixed effects
   target += normal_lpdf(beta_1 | 0, 100);
   
-  // Random-effects
-   for(i in 1:n){ target += multi_normal_lpdf(U[i,1:2] | rep_vector(0.0,2), Sigma); }
+  // Random effects
+  for(i in 1:N){ 
+    target += multi_normal_lpdf(u[i,1:2] | rep_vector(0.0,2), sigma);
+  }
 
-   // Random-effects variance
-   target += inv_gamma_lpdf(sigma_U | 0.01, 0.01);
+  // Random effects variance
+  target += inv_gamma_lpdf(var_u | 0.01, 0.01);
 
-   // Random-effects correlation
-   target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
+  // Random effects correlation
+  target += beta_lpdf((rho+1)/2 | 0.5, 0.5);
   
   // Residual error variance
-  target += inv_gamma_lpdf(sigma_z | 0.01, 0.01);   
+  target += inv_gamma_lpdf(var_z | 0.01, 0.01);
 }
 ```
 
+Stan model for survival process:
+
+```{stan output.var="event_model"}
+functions{
+  /**
+  * Return a real number corresponding to function function to be integrated 
+  * evaluated at point t.
+  *
+  * @param t Value to evaluate function  
+  * @param xc A high precision version of the distance from x to the nearest 
+  *        endpoint in a definite integral
+  * @param theta Parameter values used to evaluate the integral
+  * @param x_r Data values used to evaluate the integral
+  * @param x_i Integer data used to evaluate the integral.
+  * @return The value of the integrand evaluated at the point x.
+  */
+  real integrand(real t, 
+                 real xc, 
+                 array[] real theta, 
+                 array[] real x_r, 
+                 array[] int x_i) {
+    real rho_s = theta[1];
+    real gamma_3 = theta[2];
+    real u_2i = theta[3];
+    
+    real h = t^(rho_s-1)*exp(gamma_3*u_2i*t);
+      
+    return h;    
+  }
+  
+  /**
+  * Return a real number corresponding to function to be integrated 
+  * evaluated at point t.
+  *
+  * @param t Value to evaluate function  
+  * @param xc A high precision version of the distance from x to the nearest 
+  *        endpoint in a definite integral
+  * @param theta Parameter values used to evaluate the integral
+  * @param x_r Data values used to evaluate the integral
+  * @param x_i Integer data used to evaluate the integral.
+  * @return The value of the integrand evaluated at the point x.
+  */
+  real integrand_bp(real t,
+                    real xc,                
+                    array[] real theta,     
+                    array[] real x_r,                        
+                    array[] int x_i) {
+    real rho_s = theta[1];
+    real gamma_3 = theta[2];
+    real u_2i = theta[3];
+    
+    real h = t^rho_s*exp(gamma_3*u_2i*t);
+      
+    return h;    
+  }
+
+  /**
+  * Return a Laplace approximation of specific function.
+  *
+  * @param a Lower limit to evaluate integral  
+  * @param b Upper limit to evaluate integral
+  * @param rho_s Shape of the Weibull baseline hazard
+  * @param gamma_3 3th association parameter
+  * @param u_2i ith value of the second random effect.
+  * @return The integral approximation.
+  */
+  real lap_app(real a, real b, real rho_s, real gamma_3, real u_2i){
+    real t0 = (1-rho_s)/(gamma_3*u_2i);
+    real h_t0 = (rho_s-1)*log(t0) + gamma_3*u_2i*t0;
+    real ddh_t0 = (1-rho_s)/(t0^2);
+    real lout = h_t0 + 0.5*(log(2) + log(pi()) - log(-ddh_t0)) +
+                log(normal_cdf(b, t0, -ddh_t0) -
+                normal_cdf(a, t0, -ddh_t0));
+    // real out = exp(h_t0)*sqrt(2*pi()/(-ddh_t0))*
+    //            (normal_cdf(b, t0, -ddh_t0) -
+    //            normal_cdf(a, t0, -ddh_t0));
+    return exp(lout);
+  }
+
+  /**
+  * Return a lower incomplete gamma function aproximation.
+  *
+  * @param a Integrand parameter  
+  * @param z Upper limit to evaluate integral
+  * @param tol Aproximation tolerance
+  * @return The approximation.
+  */
+  real low_inc_gamma(real a, real z, real tol) {
+    real inc_gamma;
+    
+    if (z < -50) {
+      int n = 0;
+      real inc_gamma0 = (1-a)/(z^n);
+      real inc_gamma1 = inc_gamma0 + 1;
+      while (abs(inc_gamma1 - inc_gamma0) > tol){
+        n += 1;
+        inc_gamma1 = inc_gamma0;
+        inc_gamma0 += (1-a)/(z^n);
+      }
+      inc_gamma = exp(z)/(z*tgamma(a))*inc_gamma0;
+    }
+    else {
+      int n = 0;
+      real inc_gamma0 = (-z)^n/(tgamma(n+1)*(a+n));
+      real inc_gamma1 = inc_gamma0 + 1;
+      while (abs(inc_gamma1 - inc_gamma0) > tol){
+        n += 1;
+        inc_gamma1 = inc_gamma0;
+        inc_gamma0 += (-z)^n/(tgamma(n+1)*(a+n));
+      }
+      inc_gamma = 1/(tgamma(a))*inc_gamma0;
+    }
+    real out = z^a*tgamma(a)*inc_gamma;
+    return out;
+  }
+  
+  /**
+  * Return a vector with each value out[i] corresponding to logarithm hazard 
+  * function evaluated at point t[i].
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard
+  * @param id Array corresponding to subjects to evaluate the function.
+  * @return Vector corresponding to logarithm hazard function evaluated at 
+  * observed times.
+  */
+  vector log_haz(vector t, 
+                matrix x, 
+                vector u_1, 
+                vector u_2, 
+                vector u_3, 
+                vector gamma, 
+                real beta_21, 
+                real lambda, 
+                real rho_s,
+                array[] int id){
+    int N = num_elements(id);
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = rep_vector(log(lambda), N) + rep_vector(log(rho_s), N) + (rho_s-1)*
+          log(t[id]) + beta_21*x[id,1] + gamma_1*u_1[id] + gamma_2*u_2[id] +
+          gamma_3*(u_1[id] + rows_dot_product(u_2[id],t[id])) + u_3[id];
+    return out;
+  }
+
+  /**
+  * Return a vector with each value out[i] corresponding to constant terms of
+  * the cumulative hazard function evaluated at point t[i]
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard.
+  * @return Vector corresponding to constant terms of the cumulative hazard 
+  * function evaluated at observed times.
+  */
+  vector const_term_cum_haz(vector t, 
+                           matrix x, 
+                           vector u_1, 
+                           vector u_2, 
+                           vector u_3, 
+                           vector gamma, 
+                           real beta_21, 
+                           real lambda, 
+                           real rho_s){
+    int N = num_elements(t);                         
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = lambda*rho_s*exp(beta_21*x[1:N,1] + gamma_1*u_1 + 
+          gamma_2*u_2 + gamma_3*u_1 + u_3);
+    return out;
+  }
+  
+  /**
+  * Return a vector with each value out[i] corresponding to log constant terms 
+  * of the cumulative hazard function evaluated at point t[i]
+  *
+  * @param t Vector corresponding to observed time values  
+  * @param x Matrix of covariates
+  * @param u_1 Vector corresponding to random effects
+  * @param u_2 Vector corresponding to random effects
+  * @param u_3 Vector corresponding to random effects
+  * @param gamma Vector corresponding to association parameters
+  * @param beta_21 Value corresponding to fixed effects
+  * @param lambda Scale of the Weibull baseline hazard
+  * @param rho_s Shape of the Weibull baseline hazard.
+  * @return Vector corresponding to log constant terms of the cumulative hazard 
+  * function evaluated at observed times.
+  */
+    
+  vector lconst_term_cum_haz(vector t, 
+                             matrix x, 
+                             vector u_1, 
+                             vector u_2, 
+                             vector u_3, 
+                             vector gamma, 
+                             real beta_21, 
+                             real lambda, 
+                             real rho_s){
+    int N = num_elements(t);
+    vector[N] out;
+    real gamma_1 = gamma[1];
+    real gamma_2 = gamma[2];
+    real gamma_3 = gamma[3];
+    out = rep_vector(log(lambda), N) + rep_vector(log(rho_s), N) +
+           beta_21*x[1:N,1] + gamma_1*u_1 + gamma_2*u_2 + gamma_3*u_1 + u_3;
+    return out;
+  }
+}
+
+
+data{
+  int N;
+  int n_unc_times;
+  matrix[N,1] x;
+  vector[N] times;
+  array[n_unc_times] int<lower=1,upper=N> ind_unc_times;
+}
+
+transformed data {
+  array[0] real x_r;
+  array[0] int x_i;
+}
+
+parameters{
+  real beta_21;
+  vector[3] gamma;
+  real<lower=0> lambda;
+  real<lower=0> rho_s;
+  array[2] real<lower=0> var_u;
+  real<lower=-1, upper=1> rho;
+  real<lower=0> var_u3;
+  matrix[N,2] u;
+  vector[N] u_3;
+}
+
+transformed parameters{
+  cov_matrix[2] sigma;
+
+  sigma[1,1] = var_u[1];
+  sigma[2,2] = var_u[2];
+  sigma[1,2] = sqrt(var_u[1]*var_u[2])*rho;
+  sigma[2,1] = sigma[1,2];
+}
+
+
+model {
+  // ------------------------------------------------------
+  //          LOG-LIKELIHOOD FOR SURVIVAL SUBMODEL                
+  // ------------------------------------------------------
+  
+  vector[n_unc_times] lhaz;
+
+  vector[N] lsurv;
+  
+  // Log-hazard function
+  lhaz = log_haz(times,
+                x,
+                u[1:N,1],
+                u[1:N,2],
+                u_3,
+                gamma,
+                beta_21,
+                lambda,
+                rho_s,
+                ind_unc_times);
+                
+  // Integration by parts
+
+  // Log-survival function
+  lsurv = -const_term_cum_haz(times,
+                             x,
+                             u[1:N,1],
+                             u[1:N,2],
+                             u_3,
+                             gamma,
+                             beta_21,
+                             lambda,
+                             rho_s);
+
+  for (i in 1:N) {
+    real integral = integrate_1d(integrand_bp,
+                                 0.0,
+                                 times[i],
+                                 {rho_s, gamma[3], u[i,2]},
+                                 x_r,
+                                 x_i,
+                                 1e-8);
+    lsurv[i] *= (1/rho_s)*(times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+                gamma[3]*u[i,2]);
+  }
+
+  // // Integration by parts with log
+  // 
+  // // Log-survival function
+  // lsurv = lconst_term_cum_haz(times,
+  //                             x,
+  //                             u[1:N,1],
+  //                             u[1:N,2],
+  //                             u_3,
+  //                             gamma,
+  //                             beta_21,
+  //                             lambda,
+  //                             rho_s);
+  // 
+  // for (i in 1:N) {
+  //   real integral = integrate_1d(integrand_bp,
+  //                                0.0,
+  //                                times[i],
+  //                                {rho_s, gamma[3], u[i,2]},
+  //                                x_r,
+  //                                x_i,
+  //                                0.01);
+  //   lsurv[i] += -log(rho_s) +
+  //               log((times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //               gamma[3]*u[i,2]*integral));
+  //   lsurv[i] = -exp(lsurv[i]);
+  // }
+
+  // Integration using incomplete gamma approximation
+  // for (i in 1:N) {
+  //   if (!is_nan(low_inc_gamma(rho_s, -gamma[3]*u[i,2]*times[i], 0.01))){
+  //     lsurv[i] *= (-gamma[3]*u[i,2])^(-rho_s)*
+  //                 low_inc_gamma(rho_s, -gamma[3]*u[i,2]*times[i], 0.01);
+  //   }
+  //   else {
+  //     real integral = integrate_1d(integrand_bp,
+  //                                  0.0,
+  //                                  times[i],
+  //                                  {rho_s, gamma[3], u[i,2]},
+  //                                  x_r,
+  //                                  x_i,
+  //                                  0.01);
+  //     lsurv[i] *= (1/rho_s)*
+  //                 (times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //                 gamma[3]*u[i,2]*integral);
+  //   }
+  // }
+
+  // Direct integral
+  // for (i in 1:N) {
+  //   real integral = integrate_1d(integrand,
+  //                                0.0,
+  //                                times[i],
+  //                                {rho_s, gamma[3], u[i,2]},
+  //                                x_r,
+  //                                x_i,
+  //                                0.01);
+  //   lsurv[i] = lsurv[i]*integral;
+  // }
+  
+  // // Laplace Approximation
+  // for (i in 1:N) {
+  //   if (rho_s > 1){
+  //     lsurv[i] *= lap_app(0, times[i], rho_s, gamma[3], u[i,2]);
+  //   }
+  //   else {
+  //     real integral = integrate_1d(integrand_bp,
+  //                                  0.0,
+  //                                  times[i],
+  //                                  {rho_s, gamma[3], u[i,2]},
+  //                                  x_r,
+  //                                  x_i,
+  //                                  0.01);
+  //     lsurv[i] *= (1/rho_s)*
+  //                 (times[i]^rho_s*exp(gamma[3]*u[i,2]*times[i]) -
+  //                 gamma[3]*u[i,2]*integral);
+  //   }
+  // }
+   
+  // Survival log-likelihood
+  target += sum(lhaz) + sum(lsurv);
+   
+   
+  // ------------------------------------------------------
+  //          PRIOR DISTRIBUTIONS
+  // ------------------------------------------------------
+
+  // Survival fixed effects
+  target += normal_lpdf(beta_21 | 1, 5);
+
+  // Weibull scale parameter
+  target += gamma_lpdf(lambda | 1, 1);
+
+  // Weibull shape parameter
+  target += gamma_lpdf(rho_s | 2, 1);
+
+  // Association parameters
+  target += normal_lpdf(gamma | 0, 10);
+
+  // Random effects
+  for(i in 1:N){
+    target += multi_normal_lpdf(u[i,1:2] | rep_vector(0.0,2), sigma);
+    target += normal_lpdf(u_3[i] | 0, var_u3);
+  }
+
+  // Random effects variance
+  target += inv_gamma_lpdf(var_u | 0.01, 0.01);
+  target += inv_gamma_lpdf(var_u3 | 0.01, 0.01);
+
+  // Random effects correlation
+  target += beta_lpdf((rho+1)/2 | 2, 1);
+}
+
+```
+
+
 # Results
 
+Longitudinal model:
+
 ```{r}
-setwd("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/joint-models-in-stan")
+setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
+            "joint-models-in-stan", sep = ""))
 
-X1 <- as.matrix(X,ncol=1)
-y <- long_data$y
-n <- nrow(X1)
-N <- length(y)
-ID <- as.numeric(long_data$id)
-obs_times <- long_data$obs_times
+# Required quantities for longitudinal model fitting
 
-model <- cmdstan_model("code/long_model.stan")
+x <- as.matrix(data$survival[,2],1) # unique x
+N <- size(x)[1]                     # total number of observations
+y <- data$longitudinal[,2]          # longitudinal outcomes
+n_obs <- length(y)                  # total number of longitudinal outcomes
+id <- data$longitudinal[,1]         # patient IDs
+obs_times <- data$longitudinal[,4]  # visit times for repeated observations
 
-mle <- model$optimize(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times))
-posterior_samples <- model$sample(data = list(y=y,N=N,n=n,X1=X1,ID=ID,obs_times=obs_times), chains = 1)
+long_data = list(y=y,
+                 N=N,
+                 n_obs=n_obs,
+                 x=x,
+                 id=id,
+                 obs_times=obs_times)
+
+long_model <- cmdstan_model("code/long_model.stan")
+
+long_posterior_samples <- long_model$sample(data = long_data, chains = 1)
 ```
 
 ```{r}
-mle$summary()
+long_posterior_samples$summary()
+```
+
+Event-time model:
+
+```{r}
+setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
+            "joint-models-in-stan", sep = ""))
+
+# Required quantities for event-time model fitting
+
+x <- as.matrix(data$survival[,2],1)  # unique x
+N <- size(x)[1]                      # total number of observations
+status <- data$survival[,4]          # vital status (1 = dead, 0 = alive)
+times <- data$survival[,3]           # times to event
+ind_unc_times <- which(status==1)    # uncensored times indicator
+n_unc_times <- length(ind_unc_times) # number of uncensored times
+
+event_data <- list(N=N,
+                   x=x,
+                   times=times,
+                   ind_unc_times=ind_unc_times,
+                   n_unc_times=n_unc_times)
+
+event_model <- cmdstan_model("code/event_model.stan")
+
+event_posterior_samples <- event_model$sample(data = event_data, chains = 1)
 ```
 
 ```{r}
-posterior_samples$summary()
+event_posterior_samples$summary()
 ```
+
 
 Codes based on:
 
