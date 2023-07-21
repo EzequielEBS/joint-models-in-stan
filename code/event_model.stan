@@ -47,9 +47,9 @@ functions{
                  real lambda, 
                  real rho_s){
     int N = num_elements(t);                         
-    vector[N] out;
-    out = lambda*rows_dot_product(exp(beta_21*x[1:N,1] + u_3),t^rho_s);
-    return out;
+    vector[N] lout;
+    lout = rep_vector(log(lambda), N) + rho_s*log(t) + beta_21*x[1:N,1] + u_3;
+    return exp(lout);
   }
 }
 

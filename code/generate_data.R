@@ -121,7 +121,7 @@ lambda <- 0.4
 rho_s <- 1
 cens_time <- 4
 beta <- c(0,1,1,1)
-gamma <- c(0,0,0)
+gamma <- c(-1.5,0,2)
 var_u <- c(0.5,1,0.25)
 var_z <- 0.25
 rho <- 0
@@ -142,7 +142,7 @@ data <- sim_data(N,
 # Required quantities for longitudinal model fitting
 
 x <- as.matrix(data$survival[,2],1) # unique x
-N <- size(x)[1]                     # total number of observations
+N <- dim(x)[1]                     # total number of observations
 y <- data$longitudinal[,2]          # longitudinal outcomes
 n_obs <- length(y)                  # total number of longitudinal outcomes
 id <- data$longitudinal[,1]         # patient IDs
@@ -169,7 +169,7 @@ long_posterior_samples$summary(c("beta_1",
 # Required quantities for event-time model fitting
 
 x <- as.matrix(data$survival[,2],1)  # unique x
-N <- size(x)[1]                      # total number of observations
+N <- dim(x)[1]                       # total number of observations
 status <- data$survival[,4]          # vital status (1 = dead, 0 = alive)
 times <- data$survival[,3]           # times to event
 ind_unc_times <- which(status==1)    # uncensored times indicator
@@ -218,6 +218,7 @@ joint_mle$summary(c("beta_1",
                     "var_u", 
                     "rho", 
                     "var_u3"))
+
 joint_posterior_samples$summary(c("beta_1", 
                                   "beta_21", 
                                   "gamma", 

@@ -20,7 +20,7 @@ functions{
     vector[N] out;
     
     out = beta_1[1] + beta_1[2]*obs_times + beta_1[3]*x[id,1] + u[id,1] + 
-          rows_dot_product(u[id,2],obs_times);
+          u[id,2] .* obs_times;
     
     return out;
   } 
