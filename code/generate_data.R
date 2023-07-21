@@ -1,6 +1,5 @@
 library("MASS") 
 library("cmdstanr")
-library("pracma")
 
 setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
             "joint-models-in-stan", sep = ""))
@@ -54,7 +53,7 @@ sim_data <- function(N,
   bvn_u <- mvrnorm(N, mu = mu_u, Sigma = sigma)
   u_1 <- bvn_u[,1]
   u_2 <- bvn_u[,2]
-  u_3 <- rnorm(N, 0, var_u3)
+  u_3 <- rnorm(N, 0, sqrt(var_u3))
   
   x <- rnorm(N, 0, 1)
   
@@ -117,15 +116,15 @@ sim_data <- function(N,
   return(data)
 }
 
-N<- 500
-lambda <- 1
-rho_s <- 2
-cens_time <- 3
+N<- 250
+lambda <- 0.4
+rho_s <- 1
+cens_time <- 4
 beta <- c(0,1,1,1)
 gamma <- c(0,0,0)
-var_u <- c(0.5,0.5,05)
+var_u <- c(0.5,1,0.25)
 var_z <- 0.25
-rho <- 0.5
+rho <- 0
 n_rep_obs <- 0.5
 
 data <- sim_data(N, 
@@ -162,7 +161,10 @@ long_mle <- long_model$optimize(data = long_data)
 long_posterior_samples <- long_model$sample(data = long_data, chains = 1)
 
 long_mle$summary()
-long_posterior_samples$summary()
+long_posterior_samples$summary(c("beta_1",
+                                 "var_z",
+                                 "var_u", 
+                                 "rho"))
 
 # Required quantities for event-time model fitting
 
@@ -177,13 +179,51 @@ event_data <- list(N=N,
                    x=x,
                    times=times,
                    ind_unc_times=ind_unc_times,
-                   n_unc_times=n_unc_times)
+                   n_unc_times=n_unc_times
+                   )
 
 
 event_model <- cmdstan_model("code/event_model.stan")
 
 event_mle <- event_model$optimize(data = event_data)
-event_posterior_samples <- event_model$sample(data = event_data, chains = 1)
+event_posterior_samples <- event_model$sample(data = event_data, chains = 4)
 
 event_mle$summary()
-event_posterior_samples$summary()
+event_posterior_samples$summary(c("beta_21", 
+                                  "lambda",
+                                  "rho_s",
+                                  "var_u3"))
+
+joint_data <- list(N=N,
+                   n_obs=n_obs,
+                   y=y,
+                   id=id,
+                   obs_times=obs_times,
+                   x=x,
+                   times=times,
+                   ind_unc_times=ind_unc_times,
+                   n_unc_times=n_unc_times)
+
+joint_model <- cmdstan_model("code/joint_model.stan")
+
+joint_mle <- joint_model$optimize(data = joint_data)
+joint_posterior_samples <- joint_model$sample(data = joint_data, chains = 1)
+
+joint_mle$summary(c("beta_1", 
+                    "beta_21", 
+                    "gamma", 
+                    "lambda", 
+                    "rho_s", 
+                    "var_z", 
+                    "var_u", 
+                    "rho", 
+                    "var_u3"))
+joint_posterior_samples$summary(c("beta_1", 
+                                  "beta_21", 
+                                  "gamma", 
+                                  "lambda", 
+                                  "rho_s", 
+                                  "var_z", 
+                                  "var_u", 
+                                  "rho", 
+                                  "var_u3"))
