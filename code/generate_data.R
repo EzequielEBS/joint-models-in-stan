@@ -4,7 +4,7 @@ library("cmdstanr")
 setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
             "joint-models-in-stan", sep = ""))
 
-set.seed(123)
+set.seed(12315)
 
 #########################################################################
 # Joint model simulation
@@ -63,20 +63,24 @@ sim_data <- function(N,
   
   # Simulating the times to event
 
-  v <- runif(n=N)
+  v <- runif(N)
   id_times <- c(1:N)
   
   for(i in 1:N){
-    haz <- Vectorize(function(s) {
-      lambda*rho_s*s^(rho_s-1)*exp(beta_21*x[i] + gamma_1*u_1[i] + 
-      gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) + u_3[i])
-    })
+    haz <- function(s) {
+      lres <- log(lambda) + log(rho_s) + (rho_s-1)*log(s) + beta_21*x[i] +
+              gamma_1*u_1[i] + gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) +
+              u_3[i]
+      return(exp(lres))
+    }
     
-    cum_haz <- Vectorize(function(t) integrate(haz, 0, t)$value)
-
-    sv <- Vectorize(function(t) abs(exp(-cum_haz(t)) - v[i]))
-
-    times[i] <- optim(1e-6, sv, lower = 0, upper = Inf, method = "L-BFGS-B")$par
+    cum_haz <- function(t) {
+      res <- integrate(haz, 0, t)$value
+      return(res)
+    }
+    
+    sv <- function(t) abs(exp(-cum_haz(t)) - v[i])
+    times[i] <- optim(1, sv, lower = 1e-6, upper = Inf, method = "L-BFGS-B")$par
   }
   
   status <- as.vector(times < cens_time)
@@ -121,7 +125,7 @@ lambda <- 0.4
 rho_s <- 1
 cens_time <- 4
 beta <- c(0,1,1,1)
-gamma <- c(-1.5,0,2)
+gamma <- c(0,0,0)
 var_u <- c(0.5,1,0.25)
 var_z <- 0.25
 rho <- 0
@@ -147,6 +151,7 @@ y <- data$longitudinal[,2]          # longitudinal outcomes
 n_obs <- length(y)                  # total number of longitudinal outcomes
 id <- data$longitudinal[,1]         # patient IDs
 obs_times <- data$longitudinal[,4]  # visit times for repeated observations
+
 
 long_data = list(y=y,
                  N=N,
@@ -185,10 +190,8 @@ event_data <- list(N=N,
 
 event_model <- cmdstan_model("code/event_model.stan")
 
-event_mle <- event_model$optimize(data = event_data)
-event_posterior_samples <- event_model$sample(data = event_data, chains = 4)
+event_posterior_samples <- event_model$sample(data = event_data, chains = 1)
 
-event_mle$summary()
 event_posterior_samples$summary(c("beta_21", 
                                   "lambda",
                                   "rho_s",
@@ -206,18 +209,7 @@ joint_data <- list(N=N,
 
 joint_model <- cmdstan_model("code/joint_model.stan")
 
-joint_mle <- joint_model$optimize(data = joint_data)
 joint_posterior_samples <- joint_model$sample(data = joint_data, chains = 1)
-
-joint_mle$summary(c("beta_1", 
-                    "beta_21", 
-                    "gamma", 
-                    "lambda", 
-                    "rho_s", 
-                    "var_z", 
-                    "var_u", 
-                    "rho", 
-                    "var_u3"))
 
 joint_posterior_samples$summary(c("beta_1", 
                                   "beta_21", 

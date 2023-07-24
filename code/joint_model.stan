@@ -198,7 +198,7 @@ model{
                                     {rho_s, gamma[3], u[i,2]},
                                     x_r,
                                     x_i,
-                                    1e-8);
+                                    1e-4);
     real second_term_bp = gamma[3] * u[i,2] * integral_bp;
     integral[i] = (1/rho_s)*(exp(lfirst_term_bp) - second_term_bp);
   } 
