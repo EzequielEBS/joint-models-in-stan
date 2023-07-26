@@ -4,8 +4,6 @@ library("cmdstanr")
 setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
             "joint-models-in-stan", sep = ""))
 
-set.seed(12315)
-
 #########################################################################
 # Joint model simulation
 #########################################################################
@@ -79,7 +77,7 @@ sim_data <- function(N,
       return(res)
     }
     
-    sv <- function(t) abs(exp(-cum_haz(t)) - v[i])
+    sv <- function(t) (exp(-cum_haz(t)) - v[i])^2
     times[i] <- optim(1, sv, lower = 1e-6, upper = Inf, method = "L-BFGS-B")$par
   }
   
@@ -94,129 +92,56 @@ sim_data <- function(N,
   obs_times_out <- vector()
   for(i in 1:N){
     # number of repeated observations for each individual
-    obs_times <- seq(0,times[i], by = n_rep_obs) 
+    obs_times <- seq(0, times[i], by = n_rep_obs) 
     
     x_t <- rep(x[i], length(obs_times))
 
-    x_total <- c(x_total,x_t)
+    x_total <- c(x_total, x_t)
     z = rnorm(length(obs_times), 0, sqrt(var_z))
     y_t <- beta_11 + beta_12*obs_times + beta_13*rep(x[i], length(obs_times)) + 
           rep(u_1[i], length(obs_times)) + rep(u_2[i], length(obs_times))*
           obs_times + z
 
-    long_out <- c(long_out,y_t)
-    id <- c(id,rep(i,length(obs_times)))
-    obs_times_out <- c(obs_times_out,obs_times)
+    long_out <- c(long_out, y_t)
+    id <- c(id,rep(i, length(obs_times)))
+    obs_times_out <- c(obs_times_out, obs_times)
   }
   
   #---------------------------------------------------------------------
   # Creating the longitudinal and survival processes object
   #---------------------------------------------------------------------
-  long_proc <- as.matrix(cbind(id, long_out, x_total, obs_times_out)) 
-  surv_proc <- as.matrix(cbind(id_times, x, times, status)) 
-  data <- list(long_proc, surv_proc)
-  names(data) <- c("longitudinal","survival")
+  N <- length(id_times)                # number of subjects
+  n_obs <- length(long_out)            # total number of observations
+  x <- as.matrix(x,1)                  # unique x
+  obs_times <- obs_times_out           # visit times for repeated observations
+  y <- long_out                        # longitudinal outcomes
+  ind_unc_times <- which(status==1)    # uncensored times indicator
+  n_unc_times <- length(ind_unc_times) # number of uncensored times
   
-  return(data)
-}
-
-N<- 250
-lambda <- 0.4
-rho_s <- 1
-cens_time <- 4
-beta <- c(0,1,1,1)
-gamma <- c(0,0,0)
-var_u <- c(0.5,1,0.25)
-var_z <- 0.25
-rho <- 0
-n_rep_obs <- 0.5
-
-data <- sim_data(N, 
-                 lambda, 
-                 rho_s, 
-                 cens_time, 
-                 beta, 
-                 gamma, 
-                 var_u, 
-                 var_z, 
-                 rho, 
-                 n_rep_obs)
-
-
-# Required quantities for longitudinal model fitting
-
-x <- as.matrix(data$survival[,2],1) # unique x
-N <- dim(x)[1]                     # total number of observations
-y <- data$longitudinal[,2]          # longitudinal outcomes
-n_obs <- length(y)                  # total number of longitudinal outcomes
-id <- data$longitudinal[,1]         # patient IDs
-obs_times <- data$longitudinal[,4]  # visit times for repeated observations
-
-
-long_data = list(y=y,
-                 N=N,
-                 n_obs=n_obs,
-                 x=x,
-                 id=id,
-                 obs_times=obs_times)
-             
-long_model <- cmdstan_model("code/long_model.stan")
-
-long_mle <- long_model$optimize(data = long_data)
-long_posterior_samples <- long_model$sample(data = long_data, chains = 1)
-
-long_mle$summary()
-long_posterior_samples$summary(c("beta_1",
-                                 "var_z",
-                                 "var_u", 
-                                 "rho"))
-
-# Required quantities for event-time model fitting
-
-x <- as.matrix(data$survival[,2],1)  # unique x
-N <- dim(x)[1]                       # total number of observations
-status <- data$survival[,4]          # vital status (1 = dead, 0 = alive)
-times <- data$survival[,3]           # times to event
-ind_unc_times <- which(status==1)    # uncensored times indicator
-n_unc_times <- length(ind_unc_times) # number of uncensored times
-
-event_data <- list(N=N,
-                   x=x,
-                   times=times,
-                   ind_unc_times=ind_unc_times,
-                   n_unc_times=n_unc_times
-                   )
-
-
-event_model <- cmdstan_model("code/event_model.stan")
-
-event_posterior_samples <- event_model$sample(data = event_data, chains = 1)
-
-event_posterior_samples$summary(c("beta_21", 
-                                  "lambda",
-                                  "rho_s",
-                                  "var_u3"))
-
-joint_data <- list(N=N,
+  long_data <- list(y=y,
+                   N=N,
                    n_obs=n_obs,
-                   y=y,
-                   id=id,
-                   obs_times=obs_times,
                    x=x,
-                   times=times,
-                   ind_unc_times=ind_unc_times,
-                   n_unc_times=n_unc_times)
-
-joint_model <- cmdstan_model("code/joint_model.stan")
-
-joint_posterior_samples <- joint_model$sample(data = joint_data, chains = 1)
-
-joint_posterior_samples$summary(c("beta_1", 
-                                  "beta_21", 
-                                  "gamma", 
-                                  "lambda", 
-                                  "rho_s", 
-                                  "var_z", 
-                                  "var_u", 
-                                  "rho", 
-                                  "var_u3"))
+                   id=id,
+                   obs_times=obs_times)
+  
+  event_data <- list(N=N,
+                     x=x,
+                     times=times,
+                     ind_unc_times=ind_unc_times,
+                     n_unc_times=n_unc_times)
+  
+  joint_data <- list(N=N,
+                     n_obs=n_obs,
+                     y=y,
+                     id=id,
+                     obs_times=obs_times,
+                     x=x,
+                     times=times,
+                     ind_unc_times=ind_unc_times,
+                     n_unc_times=n_unc_times)
+  
+  save(long_data, file = "data/long_data.RData")
+  save(event_data, file = "data/event_data.RData")
+  save(joint_data, file = "data/joint_data.RData")
+}
