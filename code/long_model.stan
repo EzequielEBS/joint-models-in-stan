@@ -28,24 +28,45 @@ functions{
 
 
 data{
+  // Total number of observations
   int n_obs;
+  
+  // Number of subjects
   int N;
+  
+  // Longitudinal outcomes
   vector[n_obs] y;
+  
+  // Covariate
   matrix[N,1] x;
+  
+  // Subjects id
   array[n_obs] int<lower=1,upper=N> id;
+  
+  // Observed times for longitudinal outcomes
   vector[n_obs] obs_times;
 }
 
 
 parameters{
+  // Longitudinal fixed effects
   vector[3] beta_1;
+  
+  // Measurement errors variance
   real<lower=0> var_z;
+  
+  // Longitudinal random effects variance
   array[2] real<lower=0> var_u;
+  
+  // Longitudinal random effects correlation
   real<lower=-1, upper=1> rho;
+  
+  // Longitudinal random effects
   matrix[N,2] u;
 }
 
 transformed parameters{
+  // Covariance matrix of longitudinal random effects
   cov_matrix[2] sigma;
 
   sigma[1,1] = var_u[1];

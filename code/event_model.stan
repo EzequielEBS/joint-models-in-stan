@@ -54,18 +54,36 @@ functions{
 }
 
 data{
+  // Number of subjects
   int N;
+  
+  // Number of uncensored times
   int n_unc_times;
+  
+  // Covariate
   matrix[N,1] x;
+  
+  // Times to event
   vector[N] times;
+  
+  // Uncensored time indices
   array[n_unc_times] int<lower=1,upper=N> ind_unc_times;
 }
 
 parameters{
+  // Survival fixed effects
   real beta_21;
+  
+  // Weibull scale parameter
   real<lower=0> lambda;
+  
+  // Weibull shape parameter
   real<lower=0> rho_s;
+  
+  // Survival random effects variance
   real<lower=0> var_u3;
+  
+  // Survival random effects
   vector[N] u_3;
 }
 
@@ -74,11 +92,12 @@ model {
   //          LOG-LIKELIHOOD FOR SURVIVAL SUBMODEL                
   // ------------------------------------------------------
   
+  // Log-hazard function evaluated at uncensored times
   vector[n_unc_times] lhaz;
-
+  
+  // Log-survival function evaluated at times
   vector[N] lsurv;
   
-  // Log-hazard function
   lhaz = log_haz(times,
                  x,
                  u_3,
@@ -87,7 +106,6 @@ model {
                  rho_s,
                  ind_unc_times);
 
-  // Log-survival function
   lsurv = -cum_haz(times,
                    x,
                    u_3,

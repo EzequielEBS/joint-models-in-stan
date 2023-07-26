@@ -125,14 +125,31 @@ functions{
 
 
 data{
+  // Total number of observations
   int n_obs;
+  
+  // Number of subjects
   int N;
+  
+  // Number of uncensored times
   int n_unc_times;
+  
+  // Longitudinal outcomes
   vector[n_obs] y;
+  
+  // Covariate
   matrix[N,1] x;
+  
+  // Subjects id
   array[n_obs] int<lower=1,upper=N> id;
+  
+  // Observed times for longitudinal outcomes
   vector[n_obs] obs_times;
+  
+  // Times to event
   vector[N] times;
+  
+  // Uncensored time indices
   array[n_unc_times] int<lower=1,upper=N> ind_unc_times;
 }
 
@@ -144,21 +161,43 @@ transformed data {
 
 
 parameters{
+  // Longitudinal fixed effects
   vector[3] beta_1;
+  
+  // Survival fixed effects
   real beta_21;
+  
+  // Association parameters
   vector[3] gamma;
+  
+  // Weibull scale parameter
   real<lower=0> lambda;
+  
+  // Weibull shape parameter
   real<lower=0> rho_s;
+  
+  // Measurement errors variance
   real<lower=0> var_z;
+  
+  // Longitudinal random effects variance
   array[2] real<lower=0> var_u;
+  
+  // Longitudinal random effects correlation
   real<lower=-1, upper=1> rho;
+  
+  // Survival random effects variance
   real<lower=0> var_u3;
+  
+  // Longitudinal random effects
   matrix[N,2] u;
+  
+  // Survival random effects
   vector[N] u_3;
 }
 
 transformed parameters{
-  matrix[2,2] sigma;
+  // Covariance matrix of longitudinal random effects
+  cov_matrix[2] sigma;
 
   sigma[1,1] = var_u[1];
   sigma[2,2] = var_u[2];
@@ -172,9 +211,16 @@ model{
   //          LOG-LIKELIHOOD FOR SURVIVAL SUBMODEL                
   // ------------------------------------------------------
   
+  // Log-hazard function evaluated at uncensored times
   vector[n_unc_times] lhaz;
+  
+  // Log-survival function evaluated at times
   vector[N] lsurv;
+  
+  // Cumulative hazard function evaluated at times
   vector[N] cum_haz;
+  
+  // Integral for cumulative hazard function
   vector[N] integral;
   
   // Log-hazard function
@@ -189,7 +235,6 @@ model{
                  rho_s,
                  ind_unc_times);
                 
-  // Integral for cumulative hazard function
   for (i in 1:N) {
     real lfirst_term_bp = rho_s*log(times[i]) + (gamma[3]*u[i,2]*times[i]);
     real integral_bp = integrate_1d(integrand_bp_stable,
@@ -202,8 +247,7 @@ model{
     real second_term_bp = gamma[3] * u[i,2] * integral_bp;
     integral[i] = (1/rho_s)*(exp(lfirst_term_bp) - second_term_bp);
   } 
-                
-  // Cumulative hazard function
+
   cum_haz = const_term_cum_haz(times,
                                x,
                                u[1:N,1],
@@ -215,7 +259,6 @@ model{
                                rho_s) .*
              integral;
 
-  // Log-survival function
   lsurv = -cum_haz;
   
   // Survival log-likelihood
