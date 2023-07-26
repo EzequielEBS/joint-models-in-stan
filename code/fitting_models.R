@@ -1,4 +1,8 @@
 set.seed(25072023)
+
+setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
+            "joint-models-in-stan", sep = ""))
+
 source("code/generate_data.R")
 
 N<- 250
@@ -26,7 +30,9 @@ sim_data(N,
 load("data/joint_data.RData")
 
 long_model <- cmdstan_model("code/long_model.stan")
-long_posterior_samples <- long_model$sample(data = joint_data, chains = 1)
+long_posterior_samples <- long_model$sample(data = joint_data,
+                                            chains = 4, 
+                                            parallel_chains = 4)
 long_posterior_samples$summary(c("beta_1",
                                  "var_z",
                                  "var_u", 
@@ -34,7 +40,9 @@ long_posterior_samples$summary(c("beta_1",
 
 
 event_model <- cmdstan_model("code/event_model.stan")
-event_posterior_samples <- event_model$sample(data = joint_data, chains = 1)
+event_posterior_samples <- event_model$sample(data = joint_data, 
+                                              chains = 4, 
+                                              parallel_chains = 4)
 event_posterior_samples$summary(c("beta_21", 
                                   "lambda",
                                   "rho_s",
@@ -42,7 +50,13 @@ event_posterior_samples$summary(c("beta_21",
 
 
 joint_model <- cmdstan_model("code/joint_model.stan")
-joint_posterior_samples <- joint_model$sample(data = joint_data, chains = 1)
+
+# very slow with more iterations:
+joint_posterior_samples <- joint_model$sample(data = joint_data,
+                                              chains = 4, 
+                                              parallel_chains = 4,
+                                              iter_warmup = 500,
+                                              iter_sampling = 500)
 joint_posterior_samples$summary(c("beta_1", 
                                   "beta_21", 
                                   "gamma", 

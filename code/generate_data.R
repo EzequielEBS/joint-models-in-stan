@@ -118,6 +118,19 @@ sim_data <- function(N,
   ind_unc_times <- which(status==1)    # uncensored times indicator
   n_unc_times <- length(ind_unc_times) # number of uncensored times
   
+  long_data <- list(y=y,
+                   N=N,
+                   n_obs=n_obs,
+                   x=x,
+                   id=id,
+                   obs_times=obs_times)
+  
+  event_data <- list(N=N,
+                     x=x,
+                     times=times,
+                     ind_unc_times=ind_unc_times,
+                     n_unc_times=n_unc_times)
+  
   joint_data <- list(N=N,
                      n_obs=n_obs,
                      y=y,
@@ -128,5 +141,7 @@ sim_data <- function(N,
                      ind_unc_times=ind_unc_times,
                      n_unc_times=n_unc_times)
   
+  save(long_data, file = "data/long_data.RData")
+  save(event_data, file = "data/event_data.RData")
   save(joint_data, file = "data/joint_data.RData")
 }
