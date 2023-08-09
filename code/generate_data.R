@@ -1,5 +1,6 @@
 library("MASS") 
 library("cmdstanr")
+library("simsurv")
 
 setwd(paste("C:/Users/ezequ/OneDrive - Fundacao Getulio Vargas - FGV/Mentoria/",
             "joint-models-in-stan", sep = ""))
@@ -29,7 +30,7 @@ sim_data <- function(N,
                      rho, 
                      n_rep_obs){
   
-  times <- id <- long_out <- x_total <- vector()
+  id <- long_out <- x_total <- vector()
   
   beta_11 <- beta[1]
   beta_12 <- beta[2]
@@ -55,35 +56,25 @@ sim_data <- function(N,
   
   x <- rnorm(N, 0, 1)
   
+ 
+  
   ###################
   # Survival process
   ###################
   
   # Simulating the times to event
 
-  v <- runif(N)
   id_times <- c(1:N)
   
-  for(i in 1:N){
-    haz <- function(s) {
-      lres <- log(lambda) + log(rho_s) + (rho_s-1)*log(s) + beta_21*x[i] +
-              gamma_1*u_1[i] + gamma_2*u_2[i] + gamma_3*(u_1[i] + u_2[i]*s) +
-              u_3[i]
-      return(exp(lres))
-    }
-    
-    cum_haz <- function(t) {
-      res <- integrate(haz, 0, t)$value
-      return(res)
-    }
-    
-    sv <- function(t) (exp(-cum_haz(t)) - v[i])^2
-    times[i] <- optim(1, sv, lower = 1e-6, upper = Inf, method = "L-BFGS-B")$par
-  }
+  covs <- data.frame(id = id_times, x = x, u_1 = u_1, u_2 = u_2, u_3 = u_3)
   
-  status <- as.vector(times < cens_time)
-  times <- as.vector(ifelse(status, times, cens_time))
-  status <- as.numeric(status) # Censoring indicators (1=Observed, 0=Censored)
+  event_proc <- simsurv(dist = "weibull", lambdas = lambda, gammas = rho_s, 
+                        betas = c(x = beta_21, u_1 = gamma_1 + gamma_3, u_2 = 
+                                  gamma_2, u_3 = 1),
+                        x = covs, tde = c(u_2 = gamma_3), maxt = cens_time)
+
+  times <- event_proc$eventtime
+  status <- event_proc$status
   
   ##############################
   # Longitudinal process  
@@ -93,6 +84,8 @@ sim_data <- function(N,
   for(i in 1:N){
     # number of repeated observations for each individual
     obs_times <- seq(0, times[i], by = n_rep_obs) 
+    
+    
     
     x_t <- rep(x[i], length(obs_times))
 
